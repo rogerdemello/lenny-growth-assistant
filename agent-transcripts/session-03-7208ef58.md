@@ -1,8 +1,8 @@
 # Coding agent transcript — session 3
 
-Source: `7208ef58-2683-42cd-b827-b477eab4b160.jsonl` Â· exported 2026-08-26 14:39
+Source: `7208ef58-2683-42cd-b827-b477eab4b160.jsonl` · exported 2026-08-26 14:39
 
-1 user turns Â· 1 assistant turns Â· 0 tool calls Â· 0 tool errors
+1 user turns · 1 assistant turns · 0 tool calls · 0 tool errors
 
 > Secrets have been scrubbed automatically — see `scripts/export_agent_transcript.py`.
 > Tool inputs and results are truncated for readability.

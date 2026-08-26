@@ -338,9 +338,9 @@ def main() -> None:
         target = OUTPUT_DIR / f"session-{index:02d}-{path.stem[:8]}.md"
         header = (
             f"# Coding agent transcript — session {index}\n\n"
-            f"Source: `{path.name}` Â· exported {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-            f"{stats.user_turns} user turns Â· {stats.assistant_turns} assistant turns Â· "
-            f"{stats.tool_calls} tool calls Â· {stats.errors} tool errors\n\n"
+            f"Source: `{path.name}` · exported {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"{stats.user_turns} user turns · {stats.assistant_turns} assistant turns · "
+            f"{stats.tool_calls} tool calls · {stats.errors} tool errors\n\n"
             "> Secrets have been scrubbed automatically — see `scripts/export_agent_transcript.py`.\n"
             "> Tool inputs and results are truncated for readability.\n"
         )

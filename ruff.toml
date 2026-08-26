@@ -1,0 +1,14 @@
+# Root config so `ruff check` behaves identically whether it is run from the
+# repo root (covering scripts/) or from backend/. Without this, ruff falls back
+# to its own defaults outside backend/ and reports rules the project has not
+# opted into.
+
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008: FastAPI's Depends()/Query() defaults are the framework's idiom.
+# E501: most overruns are user-facing hint strings and SQL, where wrapping
+#       hurts readability more than the long line does.
+ignore = ["B008", "E501"]

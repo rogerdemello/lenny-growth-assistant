@@ -1,8 +1,8 @@
 # Coding agent transcript — session 4
 
-Source: `0cbad96b-158a-4224-a682-9e21d09184a4.jsonl` Â· exported 2026-08-26 14:39
+Source: `0cbad96b-158a-4224-a682-9e21d09184a4.jsonl` · exported 2026-08-26 14:39
 
-9 user turns Â· 561 assistant turns Â· 438 tool calls Â· 27 tool errors
+9 user turns · 561 assistant turns · 438 tool calls · 27 tool errors
 
 > Secrets have been scrubbed automatically — see `scripts/export_agent_transcript.py`.
 > Tool inputs and results are truncated for readability.
@@ -5202,11 +5202,11 @@ Exported 1 transcript(s) to agent-transcripts/ — no secrets detected.
 
 
 
-Source: `0cbad96b-158a-4224-a682-9e21d09184a4.jsonl` Â· exported 2026-08-26 12:25
+Source: `0cbad96b-158a-4224-a682-9e21d09184a4.jsonl` · exported 2026-08-26 12:25
 
 
 
-5 user turns Â· 233 assistant turns Â· 188 tool calls Â· 8 tool errors
+5 user turns · 233 assistant turns · 188 tool calls · 8 tool errors
 
 
 
@@ -10227,7 +10227,7 @@ The file E:\assignment\oogwayLabsFDE\backend\tests\test_agent.py has been update
 
 ========================================================================
 
-6 Â· HTML ARTIFACT + SANITIZER
+6 · HTML ARTIFACT + SANITIZER
 
 ========================================================================
 
@@ -10264,7 +10264,7 @@ ALL FLOWS PASSED
 ```
 ========================================================================
 
-5 Â· SHIP 30 ESSAY  (expect 3-6 min on a 3B CPU model)
+5 · SHIP 30 ESSAY  (expect 3-6 min on a 3B CPU model)
 
 ========================================================================
 
