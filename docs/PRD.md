@@ -113,7 +113,7 @@ Recorded because the brief was incomplete and these shaped the build:
 
 | Risk | Severity | What we did |
 |---|---|---|
-| **Hallucination** — answering from model knowledge while appearing grounded | Critical | Similarity floor withholds sources entirely rather than passing weak ones; the refusal prompt has no sources to work from. Enforced in code, tested, not left to prompt compliance. |
+| **Hallucination** — answering from model knowledge while appearing grounded | Critical | **Two stages, because one was measured and found insufficient.** A similarity floor alone could not separate in-domain from out-of-domain (gap of −0.064; "how does photosynthesis work" outscored a legitimate question), so a topic gate was added. Verified 10/10 refused, 10/10 answered, reproducible via `python -m app.rag.calibrate`. Enforced in code, not prompt compliance. |
 | **Prompt injection via transcript text** | High | Transcripts enter as data in a delimited block, never as instructions. Artifacts are sanitized and sandboxed regardless of origin. Tools are a fixed registry — a compromised generation cannot invent a tool. |
 | **Unsafe artifact rendering** | High | Two independent layers: nh3 allowlist server-side, and an iframe with an empty `sandbox` plus a no-network CSP. Neither is load-bearing alone. 22 payloads regression-tested. |
 | **Local model quality** | High | Accepted, and made visible. The router does not trust the model to choose tools; retrieval is mandatory; the essay validator reports where the output missed the spec instead of hiding it. |

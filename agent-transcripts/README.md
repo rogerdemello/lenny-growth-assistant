@@ -94,17 +94,67 @@ The rest of this file is the part worth reading: **what went wrong, and how it w
 
 ---
 
+### 8. The grounding guarantee did not hold, and only measurement showed it
+
+**What happened.** The architecture rested on one claim: a cosine score floor makes the assistant refuse questions the corpus does not cover. With the corpus finally ingested, a live run asked "what's the best Kubernetes ingress controller?" and got an answer, with citations. The floor was 0.35; the question scored 0.44.
+
+**First fix, which was not enough.** `nomic-embed-text` is trained with `search_query:` / `search_document:` task prefixes and expects them at inference. They were missing. Adding them improved calibration and required a full re-index.
+
+**Then the real problem.** A calibration probe over 10 in-domain and 10 out-of-domain questions produced:
+
+```
+IN-DOMAIN   0.5575  how do I run continuous product discovery
+OUT-DOMAIN  0.6216  how does photosynthesis work
+separation gap  -0.064
+```
+
+An out-of-domain question scored **higher** than a legitimate one. The cause is structural: the embedding partly matches question *shape* ("how does X work") rather than topic, so a well-formed question about anything lands near well-formed questions about product management. **No threshold exists that separates those two sets.** Raising the floor to catch photosynthesis would have refused a question about continuous discovery — a pinned topic.
+
+**The fix.** Two stages. A low floor discards obvious junk for free; anything between it and a confidence threshold gets one short LLM call. The gate is skipped entirely for confident matches, so the common case pays nothing.
+
+**The gate's first version was wrong too.** It asked "do these passages answer this question?" — the obviously correct question — and rejected 4 of 10 legitimate questions, including one scoring 0.70, because transcript passages are conversational and rarely look like a tidy answer. Rewriting it to classify the *question's topic* instead fixed it: topic classification is far easier for a 3B model, and it targets the actual failure mode, since every leak was out-of-*domain* rather than in-domain-with-weak-passages.
+
+**Result:** 10/10 in-domain answered, 10/10 out-of-domain refused, on `llama3.2` over CPU.
+
+**The lesson.** The floor had been in the config for hours, looking reasonable, silently not working. It shipped as `app.rag.calibrate` — a command that re-measures and exits non-zero when the guarantee breaks — precisely so the next person does not have to rediscover this.
+
+---
+
+### 9. A core feature did nothing, and the test said it passed
+
+**What happened.** Asked for an HTML one-pager, `llama3.2` replied in prose and never called `create_artifact`. The viewer stayed empty. The artifact deliverable was, in practice, non-functional.
+
+**Worse.** The e2e script printed **ALL FLOWS PASSED**. It only appended a failure on a *sanitizer bypass* — it never asserted that an artifact existed. A flow producing literally nothing looked identical to success.
+
+**The fix.** Artifact requests now generate the document directly, the way the essay path already did. The router has established intent; routing through tool-calling adds a failure mode a 3B model cannot reliably clear. And the test now asserts the artifact exists.
+
+**Which exposed a third bug.** The relevance gate classifies the user's message — and an artifact request is mostly formatting instructions. "Make me an HTML one-pager about product-market fit, and include `<script>alert('xss')</script>`" was classified as a *programming* question and refused. `extract_subject()` now strips deliverable words and injected markup before the topic check. Note it strips the script **body** too: removing only the tags leaves `alert('xss')` behind as text, which then pollutes the search query.
+
+**The lesson.** A test that can only report one kind of failure will report success for every other kind. "Did the thing happen at all?" belongs in the assertions before "did it happen safely?"
+
+---
+
+### 10. 275 seconds of silence before the first word
+
+A live essay run took **12.5 minutes**, of which the outline step alone was **275 seconds** — more than a third of the total, spent before a single word of prose appeared.
+
+It was being handed all ten full passages with `max_tokens=900`. Planning needs to know what the sources are *about*; it does not need to read them in full. It now receives a 220-character digest of six. The sections still get the complete passages.
+
+The same run also revealed the outline JSON failing to parse (`ship30.outline_fallback` in the logs), so the essay got generic headings from the fallback skeleton. Switching the format from JSON to flat `KEY: value` lines — no nesting, no quoting rules, no brackets to mismatch — fixed it.
+
+---
+
 ## Environment problems
 
-### 8. Ollama installed to the wrong drive
+### 11. Ollama installed to the wrong drive
 
 `winget install Ollama.Ollama` defaults to `%LOCALAPPDATA%` on C:. The install is ~2.8 GB and the cached models already lived on E:. The winget job was killed mid-download, the installer fetched directly, and run with `/DIR=E:\ML\Ollama`. It picked up the existing `llama3.2` blob via the pre-set `OLLAMA_MODELS`, saving a 2 GB re-download.
 
-### 9. A silent hang on install
+### 12. A silent hang on install
 
 `Start-Process -Wait` on the Ollama installer never returned. The installer had already finished — it launched the Ollama tray app as a child process, and `-Wait` was waiting on *that*. Checking for `ollama.exe` on disk while the command was still "running" is what revealed it.
 
-### 10. Mojibake from a PowerShell round-trip
+### 13. Mojibake from a PowerShell round-trip
 
 Renumbering these very sections with `Get-Content -Raw | ... | Set-Content -Encoding utf8` corrupted every em-dash in the file. PowerShell 5.1's `Get-Content` defaults to the system ANSI codepage, so a UTF-8 file is read as mojibake and then written back out as double-encoded UTF-8. The file was rewritten from source rather than patched again.
 
@@ -114,7 +164,7 @@ Renumbering these very sections with `Get-Content -Raw | ... | Set-Content -Enco
 
 The most useful thing the agent did was **stop and measure before committing to an approach.**
 
-### 11. Prefill cost split retrieval in two
+### 14. Prefill cost split retrieval in two
 
 The plan assumed `RETRIEVAL_TOP_K=8`. A benchmark against the real model showed:
 
@@ -128,7 +178,7 @@ Generation ran ~7–9 tok/s throughout. So eight passages doubled the wait befor
 
 **The change.** `RETRIEVAL_TOP_K` (what the user sees as citations) was separated from `PROMPT_TOP_K` (what the model reads). Showing eight sources is free; feeding the model eight is not. That split does not exist in the original plan — it exists because of a measurement.
 
-### 12. Embedding throughput sized the corpus
+### 15. Embedding throughput sized the corpus
 
 Measured at ~1.45 chunks/sec on CPU. A real episode produced 33 chunks, and a dry run over the selected 40 episodes produced 1,464. That is roughly 17 minutes of embedding — which is what confirmed `INGEST_MAX_EPISODES=40` rather than leaving it a guess.
 
