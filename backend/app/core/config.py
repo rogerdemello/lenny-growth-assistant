@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import ClassVar, Literal
 
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -66,6 +66,20 @@ class Settings(BaseSettings):
     embed_model: str = "nomic-embed-text"
     embed_dim: int = 768
 
+    # Asymmetric-retrieval task prefixes.
+    #
+    # nomic-embed-text is trained with `search_query:` / `search_document:`
+    # prefixes and expects them at inference. Omitting them measurably degrades
+    # calibration: on this corpus, an out-of-domain query ("best kubernetes
+    # ingress controller") scored 0.44 while a legitimate in-domain one scored
+    # 0.42 — the scores carried no usable signal, so no score floor could
+    # separate them and the grounding guarantee silently failed.
+    #
+    # Leave blank for symmetric models (all-minilm, text-embedding-3-*, ada-002).
+    # Set explicitly to override the model-name-based defaults below.
+    embed_query_prefix: str | None = None
+    embed_document_prefix: str | None = None
+
     # --- retrieval --------------------------------------------------------
     # Retrieve broadly, ground narrowly. `retrieval_top_k` is what we fetch and
     # show as citations; `prompt_top_k` is what actually enters the prompt.
@@ -121,6 +135,34 @@ class Settings(BaseSettings):
     @property
     def effective_essay_provider(self) -> ProviderName:
         return self.essay_provider or self.llm_provider
+
+    # Known asymmetric embedding models and the prefixes they were trained with.
+    _ASYMMETRIC_PREFIXES: ClassVar[dict[str, tuple[str, str]]] = {
+        "nomic-embed": ("search_query: ", "search_document: "),
+        "bge-": ("Represent this sentence for searching relevant passages: ", ""),
+        "e5-": ("query: ", "passage: "),
+        "multilingual-e5": ("query: ", "passage: "),
+        "gte-": ("", ""),
+    }
+
+    def _default_prefixes(self) -> tuple[str, str]:
+        model = self.embed_model.lower()
+        for marker, prefixes in self._ASYMMETRIC_PREFIXES.items():
+            if marker in model:
+                return prefixes
+        return ("", "")
+
+    @property
+    def query_prefix(self) -> str:
+        if self.embed_query_prefix is not None:
+            return self.embed_query_prefix
+        return self._default_prefixes()[0]
+
+    @property
+    def document_prefix(self) -> str:
+        if self.embed_document_prefix is not None:
+            return self.embed_document_prefix
+        return self._default_prefixes()[1]
 
 
 @lru_cache

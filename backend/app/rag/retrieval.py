@@ -85,7 +85,9 @@ def _row_to_citation(row: Any, score: float) -> Citation:
 
 async def vector_search(query: str, *, top_k: int, settings: Settings) -> list[Citation]:
     embedder = get_embedding_provider(settings)
-    vectors = await embedder.embed([query])
+    # The query prefix must match the one used at ingestion time, or the two
+    # vectors live in different regions of the space and every score is noise.
+    vectors = await embedder.embed([f"{settings.query_prefix}{query}"])
     if not vectors:
         return []
 

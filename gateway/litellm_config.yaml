@@ -1,0 +1,40 @@
+# Anthropic-Messages gateway in front of Azure OpenAI.
+#
+# This is what lets the Claude Agent SDK runtime run without an Anthropic API
+# key. The SDK speaks the Anthropic Messages format; LiteLLM translates it to
+# Azure OpenAI and streams the response back.
+#
+# Start it with:
+#   ./scripts/start-gateway.ps1        (Windows)
+#   ./scripts/start-gateway.sh         (macOS / Linux)
+#
+# Then set in .env:
+#   AGENT_RUNTIME=claude_sdk
+#   ANTHROPIC_BASE_URL=http://127.0.0.1:4000
+#   ANTHROPIC_AUTH_TOKEN=sk-gateway-local-only
+#
+# Verified working on 26 Aug 2026 — see gateway/README.md for the exact result.
+
+model_list:
+  - model_name: claude-azure-gpt4o
+    litellm_params:
+      model: azure/gpt-4o
+      api_base: os.environ/AZURE_OPENAI_ENDPOINT
+      api_key: os.environ/AZURE_OPENAI_API_KEY
+      api_version: os.environ/AZURE_OPENAI_API_VERSION
+    model_info:
+      max_input_tokens: 128000
+      max_output_tokens: 16384
+
+litellm_settings:
+  # Silently discard provider-specific params the upstream does not accept,
+  # rather than 400ing the whole request.
+  drop_params: true
+  telemetry: false
+  # Rewrites the request after parameter merging. This is the only place a
+  # client-supplied max_tokens can be clamped — see clamp.py for why that is
+  # necessary.
+  callbacks: clamp.proxy_handler_instance
+
+general_settings:
+  master_key: sk-gateway-local-only

@@ -308,20 +308,35 @@ Tool *calling* is still offered on top for artifact creation, where a wrong call
 
 A real implementation: the same three tools wrapped by `create_sdk_mcp_server` as `mcp__lenny__*`, the same `SKILL.md` loaded through `ClaudeAgentOptions(setting_sources=["project"], skills="all")`, and sessions resumed by id so context carries across turns.
 
-**It has not been run against the live Anthropic API.** The development machine had Azure OpenAI credentials and no Anthropic key. Two consequences, stated rather than obscured:
+**It runs — verified end to end**, against Azure OpenAI through an Anthropic-Messages gateway, with no Anthropic API key involved:
 
-- It is exercised by tests against a mocked transport, not the real API.
-- The recorded demo runs on `LocalToolLoopRuntime` — which is also what the mandatory local-Ollama requirement needs, since the SDK's bundled agent binary sends a system prompt on the order of 10–15k tokens. At ~11 s of prefill per 1k tokens on this hardware, that is minutes per turn before any work happens, and a 3B model would not hold the tool protocol across it.
+```
+  -> tool_use: mcp__lenny__search_transcripts {'query': 'pricing a B2B SaaS product'}
+  answer (18.1s): Madhavan Ramanujam emphasizes that pricing a B2B SaaS product
+  is fundamentally a product decision, not just a financial one... [S1]
+  RESULT: PASS — tool round-trip works
+```
 
-To run it: `uv pip install -e ".[agent-sdk]"`, set `ANTHROPIC_API_KEY`, set `AGENT_RUNTIME=claude_sdk`.
+That is the full chain: **Claude Agent SDK → in-process MCP tool → LiteLLM → Azure OpenAI → grounded, cited answer.** Setup is in [`gateway/`](../gateway/README.md); start it with `./scripts/start-gateway.ps1` and set `AGENT_RUNTIME=claude_sdk`.
 
-It also accepts any gateway speaking the Anthropic Messages format via `ANTHROPIC_BASE_URL` — for example a LiteLLM proxy in front of Azure OpenAI. Three constraints apply, from Anthropic's gateway protocol:
+Anthropic documents a gateway protocol, but conforming to the Messages format turned out to be necessary and not sufficient. Three concrete incompatibilities had to be solved, each a hard failure rather than a graceful degradation:
 
-- Responses **must** stream SSE; a gateway that buffers stalls the client.
-- `anthropic-version` and `anthropic-beta` must pass through unchanged.
-- Model discovery keeps only ids containing `claude` or `anthropic`, so an Azure deployment must be aliased (e.g. `claude-azure-gpt4o`).
+1. **Model discovery filters on the name.** Claude Code keeps only model ids containing `claude` or `anthropic`. An Azure deployment exposed as `azure-gpt-4o` is discovered and silently discarded. It is aliased `claude-azure-gpt4o`.
 
-`CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` and `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` are the escape hatches when a non-Anthropic upstream rejects the `thinking` or `context_management` fields.
+2. **`max_tokens: 32000` exceeds gpt-4o's ceiling** of 16384, producing a hard 400. Setting `max_tokens` in `litellm_params` does *not* help — those are defaults and an explicit client value wins the merge, which was verified by trying it first. A **pre-call hook** runs after merging and is the only place the value can be rewritten.
+
+3. **Anthropic-only fields** (`thinking`, `context_management`, `output_config`) are rejected by a non-Anthropic upstream. `drop_params: true` plus the same hook removes them; `CLAUDE_CODE_DISABLE_ADAPTIVE_THINKING=1` and `CLAUDE_CODE_DISABLE_EXPERIMENTAL_BETAS=1` stop the SDK sending them at source.
+
+Responses must also stream SSE — a gateway that buffers stalls the client.
+
+**What this still does not do: drive the local Ollama demo.** The SDK's bundled agent binary sends a system prompt on the order of 10–15k tokens. At ~11 s of prefill per 1k tokens on this hardware, that is minutes per turn before any useful work begins, and a 3B model will not hold the tool-use protocol across a prompt that size. So `LocalToolLoopRuntime` remains the local path, and the two runtimes remain justified.
+
+| Runtime | Model | Status |
+|---|---|---|
+| `LocalToolLoopRuntime` | Ollama `llama3.2` | The local demo. Fully offline, no key. |
+| `LocalToolLoopRuntime` | Azure `gpt-4o` | Same code, cloud provider. |
+| `ClaudeAgentSDKRuntime` | Azure `gpt-4o` via gateway | **Verified working.** |
+| `ClaudeAgentSDKRuntime` | Anthropic Claude | Should work unchanged with `ANTHROPIC_API_KEY`; not exercised — no key was available. |
 
 ---
 

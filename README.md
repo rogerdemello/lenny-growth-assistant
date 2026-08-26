@@ -199,7 +199,7 @@ OPENAI_COMPAT_MODEL=meta/llama-3.3-70b-instruct
 
 **Fallback behaviour.** Set `LLM_FALLBACK_PROVIDER` and a failed primary is retried on the fallback before the first token. The switch is logged, and the response records which provider actually answered — visible under each message. Failover deliberately does not apply mid-stream: restarting after output has begun would either duplicate text or discard what the user already read, so a mid-stream failure surfaces as an error instead.
 
-**Claude Agent SDK.**
+**Claude Agent SDK.** With an Anthropic key:
 
 ```bash
 uv pip install -e ".[agent-sdk]"
@@ -209,7 +209,22 @@ AGENT_RUNTIME=claude_sdk
 ANTHROPIC_API_KEY=sk-ant-...
 ```
 
-This runtime is fully implemented — same tool registry, same `SKILL.md`, sessions resumed by id — but **was not run against the live API**, because the development machine had Azure credentials and no Anthropic key. It is covered by tests against a mocked transport. It also accepts any Anthropic-Messages-format gateway via `ANTHROPIC_BASE_URL`. See [`docs/architecture.md`](docs/architecture.md#agent-runtimes) for the full reasoning and the gateway constraints.
+**Without an Anthropic key** — the SDK runtime also runs against Azure OpenAI through an Anthropic-Messages gateway, and this is **verified working**:
+
+```bash
+uv pip install -e ".[agent-sdk,gateway]"
+./scripts/start-gateway.ps1        # or scripts/start-gateway.sh
+```
+```dotenv
+AGENT_RUNTIME=claude_sdk
+ANTHROPIC_BASE_URL=http://127.0.0.1:4000
+ANTHROPIC_AUTH_TOKEN=sk-gateway-local-only
+ANTHROPIC_MODEL=claude-azure-gpt4o
+```
+
+The full chain — Claude Agent SDK → in-process MCP tool → LiteLLM → Azure OpenAI → a grounded, cited answer — is reproduced in [`gateway/README.md`](gateway/README.md), along with the three incompatibilities that had to be solved to get there (model-name filtering, a `max_tokens` ceiling, and Anthropic-only request fields).
+
+It cannot drive the *local* Ollama demo: the SDK's bundled agent sends a 10–15k token system prompt, which a 3B model on CPU cannot absorb in usable time. That is why two runtimes exist.
 
 ---
 

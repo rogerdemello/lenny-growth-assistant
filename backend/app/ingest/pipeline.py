@@ -251,7 +251,11 @@ async def ingest(
                 # partially-but-correctly ingested episode rather than nothing.
                 for start in range(0, len(chunks), EMBED_BATCH):
                     batch = chunks[start : start + EMBED_BATCH]
-                    vectors = await embedder.embed([c.text for c in batch])
+                    # Document-side prefix for asymmetric models. Must stay in
+                    # lockstep with the query prefix in rag/retrieval.py.
+                    vectors = await embedder.embed(
+                        [f"{settings.document_prefix}{c.text}" for c in batch]
+                    )
                     if len(vectors) != len(batch):
                         raise IngestionError(
                             f"Embedder returned {len(vectors)} vectors for {len(batch)} chunks."
