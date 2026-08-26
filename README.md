@@ -238,7 +238,7 @@ A deliberately bounded corpus also makes the refusal behaviour demonstrable: the
 
 ```bash
 cd backend
-uv run pytest              # 123 tests, no network required
+uv run pytest              # 153 tests in ~4s, no network or database required
 uv run pytest -v           # per-test detail
 uv run ruff check app      # lint
 ```
@@ -248,6 +248,7 @@ uv run ruff check app      # lint
 | `test_ingest.py` | frontmatter edge cases (wrapped titles, doubled apostrophes, malformed YAML), speaker-turn regex, timestamp conversion, `[inaudible]` stripping, chunker never splitting a turn, overlap without duplication, corpus selection rules |
 | `test_agent.py` | intent routing, **grounding refusal below the score floor**, lexical fallback when embeddings are down, Ship 30 validator, Azure URL layout, secrets never appearing in `/api/config` |
 | `test_security.py` | 22 XSS payloads, `data:` allowed for images but not links, CSP and sandbox policy assertions |
+| `test_api.py` | Endpoint contracts, the structured error envelope, request-id propagation, **session isolation** (messages and agent history never cross sessions), SSE frame sequence, persistence of a completed turn, ingest endpoint guarding |
 
 The manual UI plan is in [`docs/manual-test-plan.md`](docs/manual-test-plan.md).
 
