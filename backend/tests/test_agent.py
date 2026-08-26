@@ -592,4 +592,25 @@ class TestProviderRegistry:
 
     def test_essay_provider_defaults_to_the_chat_provider(self):
         assert Settings(llm_provider="ollama").effective_essay_provider == "ollama"
-        assert Settings(llm_provider="ollama", essay_provider="azure").effective_essay_provider == "azure"
+
+    def test_essay_provider_is_used_when_configured(self):
+        settings = Settings(
+            llm_provider="ollama",
+            essay_provider="azure",
+            azure_openai_endpoint="https://x.openai.azure.com",
+            azure_openai_api_key="secret",
+        )
+        assert settings.effective_essay_provider == "azure"
+
+    def test_essay_provider_falls_back_when_unconfigured(self):
+        """ESSAY_PROVIDER=azure ships as the default.
+
+        An evaluator with no Azure key must still get an essay — locally and
+        slowly — rather than an error.
+        """
+        settings = Settings(llm_provider="ollama", essay_provider="azure")
+        assert settings.effective_essay_provider == "ollama"
+
+    def test_unconfigured_openai_compat_also_falls_back(self):
+        settings = Settings(llm_provider="ollama", essay_provider="openai_compat")
+        assert settings.effective_essay_provider == "ollama"

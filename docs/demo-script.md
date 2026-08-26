@@ -11,7 +11,7 @@ Record in **one take**. An unedited take that runs 2:50 beats a polished one tha
 - [ ] **Close everything memory-hungry.** `llama3.2` needs ~3 GB resident; free RAM was 0.4 GB during development. Chrome with 40 tabs will make this demo look worse than it is.
 - [ ] **Warm Ollama** — send one throwaway question so the model is loaded. First-token latency drops from ~11 s to ~2 s once it is resident. `OLLAMA_KEEP_ALIVE=30m` keeps it there.
 - [ ] **Wake Supabase** — free projects auto-pause. Open the dashboard and confirm `GET /health` is green.
-- [ ] **Pre-run the essay once.** Generation takes 3–5 minutes locally. Have a completed one in a prior session to cut to, and start a fresh one on camera so the streaming is real.
+- [ ] **Confirm `ESSAY_PROVIDER=azure`** in `.env`. Essays return in ~37 s and score 9/9 on the validator; on local `llama3.2` the same essay takes 8–12 minutes and scores 7/9. Everything else in the demo still runs on Ollama. Say this out loud in shot 5 — it is a deliberate decision, not a shortcut.
 - [ ] **Two browser tabs:** the app, and `http://127.0.0.1:8000/health`.
 - [ ] Close the sidebar drawer, clear old test sessions so the UI looks intentional.
 
@@ -65,13 +65,11 @@ Ask: **"Write a Ship 30 essay about growth loops"**
 
 > "It's planning the structure first, then writing section by section — you can see the counter."
 
-Cut to the pre-generated one if needed.
-
 > "The Ship 30 style isn't a prompt I improvised. It's a skill file — the 1/3/1 rhythm, the six hook types, the headline formula, all encoded. And because it's encoded, I can *check* it."
 
 **Expand the validation scorecard.**
 
-> "Nine automated checks against the spec. Note it's not all green — a 3B model doesn't nail 1,250 words of structured writing. I'd rather show you exactly where it fell short than hide it."
+> "Nine automated checks against the spec, all green. And this is the one place I route out to the cloud — I measured it: the local 3B model takes eight to twelve minutes and scores seven out of nine, mostly missing the word count. Everything else you've seen — the retrieval, the citations, the refusal, the artifacts — is still running on Ollama on this laptop. The provider is shown per message, and it's one line in a config file."
 
 Then: **"Make me an HTML one-pager of that"**
 

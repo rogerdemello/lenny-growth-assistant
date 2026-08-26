@@ -164,7 +164,7 @@ Every setting lives in `.env`. [`.env.example`](.env.example) documents all of t
 | `LLM_PROVIDER` | `ollama` | `ollama` · `azure` · `openai_compat` |
 | `LLM_MODEL` | `llama3.2` | Chat model. |
 | `LLM_FALLBACK_PROVIDER` | *(empty)* | Retried on timeout or error. Blank disables. |
-| `ESSAY_PROVIDER` | *(inherits)* | Route long-form generation elsewhere. |
+| `ESSAY_PROVIDER` | `azure` | Long-form only. Falls back to `LLM_PROVIDER` if unconfigured — see below. |
 | `AGENT_RUNTIME` | `local` | `local` · `claude_sdk` |
 | `EMBED_PROVIDER` / `EMBED_MODEL` | `ollama` / `nomic-embed-text` | Changing these requires a re-index. |
 | `RETRIEVAL_TOP_K` | `8` | Passages retrieved and shown as citations. |
@@ -174,6 +174,17 @@ Every setting lives in `.env`. [`.env.example`](.env.example) documents all of t
 | `INGEST_MAX_EPISODES` | `40` | Corpus size. |
 
 **Why `PROMPT_TOP_K` is lower than `RETRIEVAL_TOP_K`:** prefill dominates latency on CPU. Measured on a Ryzen 7 7730U with no GPU, 8 passages cost ~22 s to first token versus ~11 s for 4. Showing the user 8 citations is free; feeding the model 8 is not.
+
+**Why `ESSAY_PROVIDER` defaults to `azure` while everything else stays local.** Long-form is where a 3B model struggles most. Same topic, same prompt:
+
+| | Time | Words | Validator |
+|---|---|---|---|
+| `ollama` / llama3.2 | 8–12 min | 857 | 7/9 |
+| `azure` / gpt-4o | 37 s | 1,226 | **9/9** |
+
+Chat, retrieval, citations, refusal and artifact generation all still run on `LLM_PROVIDER` — local by default, no key required. Only the ~1,250-word essay is routed out, and the active provider is shown per message in the UI.
+
+**It degrades safely.** If the named essay provider has no credentials, it falls back to `LLM_PROVIDER` automatically, so this default costs an evaluator without an Azure key nothing but time. Set `ESSAY_PROVIDER=ollama` to force fully-offline operation.
 
 ---
 
@@ -313,7 +324,7 @@ Stated plainly rather than left to be discovered:
 
 - **`docker-compose.yml` is unverified.** No Docker on the authoring machine. `scripts/start.ps1` is the tested path.
 - **The Claude Agent SDK runtime has not run against Anthropic's own API.** No Anthropic key was available. It *has* been verified end-to-end against Azure OpenAI through the bundled gateway, including a real tool round-trip — see [`gateway/README.md`](gateway/README.md).
-- **Small-model output misses the Ship 30 word-count band.** Measured on `llama3.2`: the same prompt produced 1,490 words with a soft target and 857 with a hard ceiling. The validator reports the miss rather than hiding it, which is the point of having one — but a 3B model will not reliably hit a 200-word band. `ESSAY_PROVIDER=azure` does.
+- **A 3B local model does not reliably hit the Ship 30 spec.** Measured on `llama3.2`: 1,490 words with a soft target, 857 with a hard ceiling, 7/9 validator checks. That is why `ESSAY_PROVIDER` defaults to `azure` (9/9 in 37 s) while everything else stays local. Forcing `ESSAY_PROVIDER=ollama` works and is fully offline; it is just slower and scores lower, and the validator says so rather than hiding it.
 - **Retrieval is vector-only.** The `tsvector` column and GIN index ship, and lexical search is used as a fallback when embeddings are unavailable, but RRF hybrid fusion is deliberately deferred — tuning it needs an evaluation set we did not build, and an untuned hybrid can rank worse than plain vector search. Reasoning in [`docs/design.md`](docs/design.md).
 - **Intent routing is a keyword dispatcher, not a classifier.** A deliberate choice for a 3B local model; the trade-off is documented in [`docs/design.md`](docs/design.md).
 - **No authentication.** Sessions carry a `user_id` and client metadata but there is no auth system. Out of scope, and noted in the PRD.

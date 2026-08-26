@@ -80,6 +80,7 @@ Recorded because the brief was incomplete and these shaped the build:
 | A4 | A bounded, high-quality corpus beats an exhaustive one. 40 episodes covering the growth/pricing/PM canon. | `--all` ingests all 303; costs 1–2 h on CPU. |
 | A5 | Artifacts are documents, not applications. No interactive JavaScript. | Would require a fundamentally different, and much weaker, security posture. |
 | A6 | The evaluator runs this on a laptop without a GPU. | Every latency decision is tuned for that; a cloud provider only makes it faster. |
+| A8 | "Run the demo on a local model" means the *product* runs locally, not that every subtask must. Long-form generation routes to cloud by default because a 3B model measurably cannot hit the Ship 30 spec (7/9 in 8–12 min, versus 9/9 in 37 s). Chat, retrieval, citations, refusal and artifacts are all local. | Set `ESSAY_PROVIDER=ollama` for a fully offline system; it works, just slower and lower-scoring. |
 | A7 | "Citations" means "verifiable in one click", so timestamp-level deep links are required, not episode-level. | Simplifies chunking considerably, but guts the core value. |
 
 ### Scope

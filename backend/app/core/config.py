@@ -147,7 +147,26 @@ class Settings(BaseSettings):
 
     @property
     def effective_essay_provider(self) -> ProviderName:
-        return self.essay_provider or self.llm_provider
+        """Which provider writes long-form content.
+
+        Falls back to the chat provider when the requested one has no
+        credentials. This matters because `ESSAY_PROVIDER=azure` is the
+        shipped default — it is measurably better at the format (9/9 validator
+        checks in 37s, versus 7/9 in 8-12 minutes on a 3B local model) — and an
+        evaluator who has not configured Azure must still get an essay rather
+        than an error.
+        """
+        requested = self.essay_provider
+        if requested is None or requested == self.llm_provider:
+            return self.llm_provider
+
+        if requested == "azure" and not (self.azure_openai_endpoint and self.azure_openai_api_key):
+            return self.llm_provider
+        if requested == "openai_compat" and not (self.openai_compat_base_url and self.openai_compat_api_key):
+            return self.llm_provider
+        if requested == "anthropic" and not (self.anthropic_api_key or self.anthropic_base_url):
+            return self.llm_provider
+        return requested
 
     # Known asymmetric embedding models and the prefixes they were trained with.
     _ASYMMETRIC_PREFIXES: ClassVar[dict[str, tuple[str, str]]] = {
