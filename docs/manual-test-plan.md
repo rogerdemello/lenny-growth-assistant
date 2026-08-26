@@ -2,6 +2,17 @@
 
 Covers what the automated suite cannot: the rendered UI, streaming behaviour, and the failure states an evaluator should see working.
 
+**Automated pre-check.** Before working through this by hand, run:
+
+```bash
+python scripts/check_frontend_contract.py
+```
+
+It verifies the seam where a UI bug fails *silently*: every SSE event type the
+backend emits is one the frontend declares, and every field the frontend reads
+is one the API returns. A mismatch there produces a blank pane rather than an
+error, so it is worth catching before you start clicking.
+
 **Before starting**
 
 - [ ] `ollama serve` running, with `llama3.2` and `nomic-embed-text` pulled

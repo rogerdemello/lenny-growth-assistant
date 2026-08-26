@@ -156,6 +156,13 @@ export default function App() {
           patch((t) => ({ ...t, citations: event.citations }))
           break
 
+        case 'outline':
+          // The essay plan arrives before five sections start streaming.
+          // Showing it turns a multi-minute wait into visible structure —
+          // the user can see what is coming rather than watching a counter.
+          setStage({ label: `Planned "${event.title}" — ${event.sections.length} sections` })
+          break
+
         case 'artifact': {
           const artifact = event as unknown as Artifact
           setArtifacts((prev) => [artifact, ...prev])
