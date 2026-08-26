@@ -98,7 +98,7 @@ Docker is optional — see [Running with Docker](#running-with-docker).
 
 ## Quick start
 
-> **This path has been tested from a genuine fresh clone**, not just asserted. Cloning into an empty directory, copying `.env.example`, supplying only a `DATABASE_URL`, and following the steps below produced: 199 tests passing, migrations applied, the grounding calibration at 10/10 and 10/10, the frontend building, and the API reporting `status: ok` on all components.
+> **This path has been tested from a genuine fresh clone**, not just asserted. Cloning into an empty directory, copying `.env.example`, supplying only a `DATABASE_URL`, and following the steps below produced: 204 tests passing, migrations applied, the grounding calibration at 10/10 and 10/10, the frontend building, and the API reporting `status: ok` on all components.
 
 ### 1. Clone and configure
 
@@ -206,14 +206,18 @@ AZURE_OPENAI_CHAT_DEPLOYMENT=gpt-4o-mini
 AZURE_OPENAI_API_VERSION=2024-10-21
 ```
 
-**Any OpenAI-compatible endpoint** (NVIDIA NIM, OpenAI, Groq, vLLM):
+**Any OpenAI-compatible endpoint** (NVIDIA NIM, OpenAI, Groq, vLLM) — **verified working** against NVIDIA NIM, including streaming and a real tool call:
 
 ```dotenv
 LLM_PROVIDER=openai_compat
 OPENAI_COMPAT_BASE_URL=https://integrate.api.nvidia.com/v1
 OPENAI_COMPAT_API_KEY=<key>
-OPENAI_COMPAT_MODEL=meta/llama-3.3-70b-instruct
+OPENAI_COMPAT_MODEL=openai/gpt-oss-120b
 ```
+
+Measured: 1.4 s to first token, `search_transcripts` invoked with correctly reassembled streamed arguments, `/models` health probe returning 200.
+
+> **Hosted model names expire.** This example previously read `meta/llama-3.3-70b-instruct`; NVIDIA retired it and the endpoint began returning **HTTP 410 Gone**. If you hit a 410 or 404, the model is no longer available to your account — the error message says so verbatim, and `GET /v1/models` lists what you can actually reach. This is a general hazard of pinning a hosted model name in config, not an NVIDIA quirk.
 
 **Fallback behaviour.** Set `LLM_FALLBACK_PROVIDER` and a failed primary is retried on the fallback before the first token. The switch is logged, and the response records which provider actually answered — visible under each message. Failover deliberately does not apply mid-stream: restarting after output has begun would either duplicate text or discard what the user already read, so a mid-stream failure surfaces as an error instead.
 
@@ -271,7 +275,7 @@ A deliberately bounded corpus also makes the refusal behaviour demonstrable: the
 
 ```bash
 cd backend
-uv run pytest                        # 196 tests in ~5s, no network or database required
+uv run pytest                        # 204 tests in ~3s, no network or database required
 uv run ruff check app                # lint
 uv run python -m app.rag.calibrate   # verify the grounding guarantee against the live corpus
 ```

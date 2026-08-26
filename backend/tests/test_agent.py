@@ -11,11 +11,15 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
 
 from app.agent.local_loop import _is_echo, _looks_like_followup, extract_subject
 from app.agent.router import Intent, classify, needs_retrieval
 from app.core.config import Settings
+from app.core.errors import ProviderUnavailableError
+from app.providers.base import Message
+from app.providers.openai_compat import OpenAICompatProvider, _status_hint
 from app.providers.registry import build_provider, describe_configuration
 from app.rag.relevance import gate, is_relevant
 from app.rag.retrieval import Citation, RetrievalResult, format_sources_block, search
@@ -614,3 +618,67 @@ class TestProviderRegistry:
     def test_unconfigured_openai_compat_also_falls_back(self):
         settings = Settings(llm_provider="ollama", essay_provider="openai_compat")
         assert settings.effective_essay_provider == "ollama"
+
+
+class TestProviderErrorHints:
+    """A failed provider call must name the cause, not just the status code.
+
+    These are the four failures an evaluator actually hits when pointing the app
+    at a hosted endpoint, and each one has a different fix.
+    """
+
+    def test_auth_failure_points_at_the_key(self):
+        assert "API key" in _status_hint(401, "openai_compat")
+        assert "API key" in _status_hint(403, "openai_compat")
+
+    def test_unknown_model_points_at_the_model_name(self):
+        assert "model" in _status_hint(404, "openai_compat").lower()
+
+    def test_retired_model_is_distinguished_from_an_unknown_one(self):
+        """A retired model answers 410, not 404.
+
+        NVIDIA retired `meta/llama-3.3-70b-instruct` while it was the documented
+        example in .env.example; config that worked the day before began failing
+        with no code change. "Rejected the request" would send the reader looking
+        in the wrong place, so 410 says the model is gone and how to list live ones.
+        """
+        hint = _status_hint(410, "openai_compat")
+        assert "retired" in hint
+        assert "/models" in hint
+
+    def test_rate_limit_points_at_the_fallback_provider(self):
+        assert "LLM_FALLBACK_PROVIDER" in _status_hint(429, "openai_compat")
+
+    async def test_a_retired_model_surfaces_as_an_actionable_error(self):
+        """End-to-end: the 410 body NVIDIA actually returns must reach the caller."""
+        body = (
+            b'{"type":"about:blank","title":"Gone","status":410,"detail":'
+            b'"The model \'meta/llama-3.3-70b-instruct\' has reached its end of life."}'
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(410, content=body)
+
+        provider = OpenAICompatProvider(
+            name="openai_compat",
+            base_url="https://integrate.api.nvidia.com/v1",
+            api_key="nvapi-test",
+            model="meta/llama-3.3-70b-instruct",
+        )
+
+        transport = httpx.MockTransport(handler)
+        original = httpx.AsyncClient
+
+        def with_mock_transport(*args, **kwargs):
+            kwargs["transport"] = transport
+            return original(*args, **kwargs)
+
+        with patch("app.providers.openai_compat.httpx.AsyncClient", with_mock_transport):
+            with pytest.raises(ProviderUnavailableError) as excinfo:
+                async for _ in provider.chat_stream([Message(role="user", content="hi")]):
+                    pass
+
+        error = excinfo.value
+        assert "410" in str(error)
+        assert "end of life" in str(error)  # the provider's own words survive
+        assert "retired" in error.hint      # and we add the fix

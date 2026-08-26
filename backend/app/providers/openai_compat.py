@@ -239,6 +239,15 @@ def _status_hint(status: int, provider: str) -> str:
         return f"Authentication failed for '{provider}'. Check the API key in .env."
     if status == 404:
         return f"Model or deployment not found on '{provider}'. Check the model/deployment name in .env."
+    if status == 410:
+        # Hosted catalogues retire model names on a published end-of-life date and
+        # then answer 410 rather than 404. Config that worked yesterday breaks with
+        # no code change, so name the cause instead of saying "rejected the request".
+        return (
+            f"The model configured for '{provider}' has been retired by the provider. "
+            "Pick a current one — list what your account can reach with "
+            "`curl -H \"Authorization: Bearer $KEY\" <base_url>/models`."
+        )
     if status == 429:
         return f"'{provider}' is rate-limiting. Wait, or set LLM_FALLBACK_PROVIDER."
     return f"'{provider}' rejected the request."
