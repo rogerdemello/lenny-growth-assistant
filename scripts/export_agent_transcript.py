@@ -151,9 +151,14 @@ def _is_high_entropy(value: str) -> bool:
         return False
     stripped = re.sub(r"[^A-Za-z0-9]", "", value)
     # A long unbroken alphanumeric run with no spaces is an identifier, not
-    # prose. Requiring mixed case was too strict and let a Supabase project ref
-    # (`iuayyxcynambfgjomgsm` — all lowercase) through at 8-character
-    # granularity.
+    # prose. Requiring mixed case was too strict: a Supabase project ref is
+    # twenty lowercase characters with no digits, so it failed the check and
+    # survived at 8-character granularity.
+    #
+    # (An earlier draft of this comment quoted the real project ref as an
+    # example. A fresh-clone scan caught it in the public repo. Do not put
+    # sample credentials in source, not even to explain a bug about
+    # credentials leaking.)
     return len(stripped) >= 12
 
 
