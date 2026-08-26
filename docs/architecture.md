@@ -206,11 +206,26 @@ codeload tarball ──► parse ──► select ──► chunk ──► embe
 
 **Fetch.** A tarball rather than `git clone`: no git dependency in the container, one HTTP request instead of hundreds, and the commit SHA is recorded for traceability. Cached on disk so development re-runs do not re-download.
 
-**Parse.** PyYAML frontmatter plus the speaker-turn regex `^(?P<speaker>.{1,80}?)\s*\((?P<ts>\d{1,2}:\d{2}:\d{2})\):\s*$`. Three properties of the real data that a naive parser gets wrong, each covered by a test:
+**Parse.** PyYAML frontmatter plus a speaker-turn regex. Properties of the real data that a naive parser gets wrong, each covered by a test:
 
 - Titles wrap across lines (PyYAML block folding) — a raw newline would reach the UI.
 - Apostrophes are doubled inside single-quoted scalars.
 - `[inaudible 00:00:42]` markers appear inline and waste tokens in both the embedding and the prompt.
+
+**Four turn-header formats exist in the corpus**, and getting this wrong is expensive because the symptom is silent:
+
+| Shape | Example | Supported |
+|---|---|---|
+| `Speaker (HH:MM:SS):` | `Brian Balfour (00:12:34):` | yes |
+| `Speaker (MM:SS):` | `Casey Winters (00:12):` | yes |
+| `(MM:SS):` continuation | `(00:13):` | yes — attributed to the previous speaker |
+| `Speaker:` with no timestamp | `Adriel Frederick:` | **no, deliberately** |
+
+An initial implementation accepted only `HH:MM:SS`. That produced **zero turns for 30 of 303 episodes**, which then dropped out of corpus selection with no error at all — the failure looked like "the assistant has never heard of Casey Winters" rather than a crash. Supporting `MM:SS` and bare continuation markers recovered 29 episodes and correctly attributed 17,420 continuation turns that would otherwise have had no speaker.
+
+The timestamp-less format is rejected on purpose: every chunk would carry `start_seconds=0`, so every citation would deep-link to 0:00 — a link that looks authoritative and points at the wrong place. One episode is affected, and the parser logs `parser.unsupported_format` rather than dropping it silently.
+
+A related subtlety worth recording: the separator between the speaker and the timestamp must be `[ \t]*`, not `\s*`. `\s` matches newlines, which let the speaker group begin on the *previous* line, capture a whole paragraph as a speaker name, and swallow the following header.
 
 **Select** — three passes, defined in `corpus.yml`:
 

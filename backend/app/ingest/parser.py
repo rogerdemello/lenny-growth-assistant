@@ -49,9 +49,35 @@ log = get_logger(__name__)
 
 FRONTMATTER_RE = re.compile(r"\A---\s*\n(.*?)\n---\s*\n", re.DOTALL)
 
-# "Speaker Name (00:12:34):" on its own line. The speaker part is non-greedy so
-# a name containing parentheses does not swallow the timestamp.
-TURN_RE = re.compile(r"^(?P<speaker>.{1,80}?)\s*\((?P<ts>\d{1,2}:\d{2}:\d{2})\):\s*$", re.MULTILINE)
+# Turn headers come in three shapes across the corpus, and all three are real:
+#
+#   Brian Balfour (00:12:34):     newer episodes, HH:MM:SS
+#   Casey Winters (00:12):        older episodes, MM:SS
+#   (00:13):                      a continuation of the previous speaker
+#
+# Requiring HH:MM:SS silently produced *zero* turns for older episodes, which
+# then dropped out of the corpus entirely rather than failing loudly — the
+# expensive kind of bug. The speaker group is non-greedy so a name containing
+# parentheses does not swallow the timestamp, and optional so bare continuation
+# markers still match.
+# `[ \t]*` rather than `\s*` between the speaker and the timestamp, and before
+# the line end. `\s` matches newlines, which let the speaker group start on the
+# *previous* line and consume the blank line between turns — capturing the
+# preceding paragraph as the speaker name and swallowing the following header.
+TURN_RE = re.compile(
+    r"^(?P<speaker>[^\n]{0,80}?)[ \t]*\((?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\):[ \t]*$",
+    re.MULTILINE,
+)
+
+# A fourth shape, used by a handful of older episodes, puts the timestamp in
+# brackets and the text on the *same* line:
+#
+#   [00:00:00] Ryan: I don't know how to articulate that feeling...
+#
+BRACKET_TURN_RE = re.compile(
+    r"^\[(?P<ts>\d{1,2}:\d{2}(?::\d{2})?)\]\s*(?P<speaker>[^:\n]{1,60}?):\s*(?P<text>\S.*)$",
+    re.MULTILINE,
+)
 
 # Transcription artefacts like "[inaudible 00:00:42]" add no meaning and waste
 # tokens in both the embedding and the prompt.
@@ -138,15 +164,43 @@ def parse_frontmatter(raw: str) -> tuple[dict[str, Any], str]:
     return meta, raw[match.end() :]
 
 
+def _parse_bracket_turns(body: str) -> list[Turn]:
+    """`[00:00:00] Speaker: text` — timestamp and text share a line."""
+    turns: list[Turn] = []
+    matches = list(BRACKET_TURN_RE.finditer(body))
+
+    for i, match in enumerate(matches):
+        end = matches[i + 1].start() if i + 1 < len(matches) else len(body)
+        # The first line is captured by the pattern; any following lines up to
+        # the next header belong to the same turn.
+        text = _clean(match.group("text") + "\n" + body[match.end() : end])
+        if not text:
+            continue
+        turns.append(
+            Turn(
+                speaker=match.group("speaker").strip(),
+                start_seconds=timestamp_to_seconds(match.group("ts")),
+                text=text,
+            )
+        )
+    return turns
+
+
 def parse_turns(body: str) -> list[Turn]:
     """Extract speaker turns.
 
     Text between one `Speaker (ts):` header and the next belongs to that turn.
     Anything before the first header (the `# Title` / `## Transcript` preamble)
     is dropped.
+
+    Falls back to the bracketed format if the primary pattern finds nothing.
     """
     turns: list[Turn] = []
     matches = list(TURN_RE.finditer(body))
+    if not matches:
+        return _parse_bracket_turns(body)
+
+    last_speaker = ""
 
     for i, match in enumerate(matches):
         start = match.end()
@@ -154,9 +208,19 @@ def parse_turns(body: str) -> list[Turn]:
         text = _clean(body[start:end])
         if not text:
             continue
+
+        # A bare `(00:13):` marker continues the previous speaker. Leaving it
+        # blank would produce an unattributable chunk, and attribution is the
+        # whole point of the citation.
+        speaker = match.group("speaker").strip()
+        if speaker:
+            last_speaker = speaker
+        else:
+            speaker = last_speaker
+
         turns.append(
             Turn(
-                speaker=match.group("speaker").strip(),
+                speaker=speaker,
                 start_seconds=timestamp_to_seconds(match.group("ts")),
                 text=text,
             )
@@ -175,6 +239,14 @@ def _clean(text: str) -> str:
 def parse_episode(slug: str, raw: str) -> Episode:
     meta, body = parse_frontmatter(raw)
     turns = parse_turns(body)
+
+    if not turns and body.strip():
+        # At least one episode in the corpus uses `Speaker:` with no timestamp
+        # at all. It is deliberately not supported: every chunk would carry
+        # start_seconds=0, so every citation would deep-link to 0:00 — a link
+        # that looks authoritative and points at the wrong place. Dropping the
+        # episode is the honest outcome, but it is logged rather than silent.
+        log.warning("parser.unsupported_format", slug=slug, bytes=len(body))
 
     keywords = meta.get("keywords") or []
     if isinstance(keywords, str):

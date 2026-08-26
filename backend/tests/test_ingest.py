@@ -15,7 +15,13 @@ from pathlib import Path
 import pytest
 
 from app.ingest.chunker import chunk_turns, estimate_tokens
-from app.ingest.parser import Turn, parse_episode, parse_frontmatter, timestamp_to_seconds
+from app.ingest.parser import (
+    Turn,
+    parse_episode,
+    parse_frontmatter,
+    parse_turns,
+    timestamp_to_seconds,
+)
 from app.ingest.pipeline import select_episodes
 from app.ingest.source import CorpusPolicy
 
@@ -93,6 +99,67 @@ class TestTurns:
     def test_preamble_before_first_speaker_is_dropped(self, episode):
         assert not any("## Transcript" in t.text for t in episode.turns)
         assert not any(t.text.startswith("# Why ChatGPT") for t in episode.turns)
+
+
+class TestTimestampFormats:
+    """The corpus uses four turn-header shapes. Three are supported.
+
+    Requiring only HH:MM:SS silently produced *zero* turns for 30 of 303
+    episodes, which then dropped out of the corpus without any error — the
+    expensive kind of bug, because the symptom is "the assistant doesn't know
+    about Casey Winters" rather than a stack trace.
+    """
+
+    def test_hhmmss_format(self):
+        turns = parse_turns("Brian Balfour (00:12:34):\nGrowth is a system.\n")
+        assert len(turns) == 1
+        assert turns[0].speaker == "Brian Balfour"
+        assert turns[0].start_seconds == 754
+
+    def test_mmss_format_used_by_older_episodes(self):
+        turns = parse_turns("Casey Winters (00:12):\nKindle strategies unlock fire strategies.\n")
+        assert len(turns) == 1
+        assert turns[0].speaker == "Casey Winters"
+        assert turns[0].start_seconds == 12
+
+    def test_bare_marker_continues_the_previous_speaker(self):
+        """Otherwise the chunk is unattributable, and attribution is the point."""
+        turns = parse_turns(
+            "Lenny (00:02):\nTeresa is a product coach.\n\n(00:13):\nShe wrote Continuous Discovery Habits.\n"
+        )
+        assert len(turns) == 2
+        assert turns[0].speaker == "Lenny"
+        assert turns[1].speaker == "Lenny"
+        assert turns[1].start_seconds == 13
+
+    def test_bracketed_inline_format(self):
+        turns = parse_turns(
+            "[00:00:00] Ryan: I don't know how to articulate that feeling.\n"
+            "[00:01:30] Lenny: Say more about that.\n"
+        )
+        assert len(turns) == 2
+        assert turns[0].speaker == "Ryan"
+        assert turns[0].start_seconds == 0
+        assert "articulate that feeling" in turns[0].text
+        assert turns[1].start_seconds == 90
+
+    def test_mixed_formats_in_one_episode(self):
+        turns = parse_turns(
+            "Lenny (00:02):\nFirst turn.\n\nGuest (01:02:03):\nSecond turn.\n\n(01:02:30):\nStill the guest.\n"
+        )
+        assert [t.speaker for t in turns] == ["Lenny", "Guest", "Guest"]
+        assert [t.start_seconds for t in turns] == [2, 3723, 3750]
+
+    def test_timestampless_transcript_is_rejected_not_mangled(self):
+        """A citation that deep-links to 0:00 looks authoritative and is wrong.
+
+        Dropping the episode is the honest outcome; the parser logs it.
+        """
+        episode = parse_episode(
+            "no-timestamps",
+            "## Transcript\n\nAdriel Frederick:\nThere are techno utopians who would say...\n",
+        )
+        assert episode.turns == []
 
 
 class TestEpisodeHelpers:
