@@ -161,7 +161,11 @@ Expect ~10–20 s per answer and 3–5 minutes for an essay on CPU. That is the 
 | 9.4 | Ask a question | Answers noticeably faster; still grounded and cited |
 | 9.5 | Check the footer under the answer | Reports `azure` |
 | 9.6 | Set `LLM_FALLBACK_PROVIDER=ollama`, break the Azure key, ask a question | Answer arrives from Ollama; the footer reports `ollama`; logs show `provider.failed` then `provider.fallback_succeeded` |
-| 9.7 | Revert to `LLM_PROVIDER=ollama` | Back to local |
+| 9.7 | **After any provider change, re-run `python -m app.rag.calibrate`** | Still `10/10` in-domain and `10/10` out-of-domain, exit code 0 |
+| 9.8 | Repeat test 4.6 (*"how does photosynthesis work?"*) on the new provider | Refused, **0 citations**, `grounded: false` |
+| 9.9 | Revert to `LLM_PROVIDER=ollama` | Back to local |
+
+> **Why 9.7 and 9.8 are not optional.** The relevance gate makes an LLM call, so the grounding guarantee is a property of the *configured chat model*, not of the code alone. Switching to a reasoning model (`openai/gpt-oss-120b`) once disabled the gate entirely: its thinking trace consumed the gate's token budget, the empty response hit the fail-open branch, and photosynthesis came back marked grounded with four citations. The ceiling was raised to fix it, but the general point stands — a provider swap changes grounding behaviour, and only re-running the calibration proves it still holds. See [`architecture.md`](architecture.md#failing-open-has-a-failure-mode-of-its-own-a-reasoning-model).
 
 ---
 
