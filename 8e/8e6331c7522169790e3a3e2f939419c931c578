@@ -1,0 +1,149 @@
+gateway/README.md
+  s_45e85910540086::t_194b1db21bf9be 1-115
+docs/architecture.md
+  s_45e85910540086::t_7b95eca6c51a61 311,313-322,324,326,328,330-339
+gateway/clamp.py
+  s_45e85910540086::t_0a9c590b2e56c8 1-47
+scripts/start-gateway.ps1
+  s_45e85910540086::t_fee9be4f846e1c 1-61
+backend/app/rag/retrieval.py
+  s_45e85910540086::t_1b59a71b1b8dcd 88-90
+backend/app/core/config.py
+  s_45e85910540086::t_a29834afbe9bbe 139-166
+  s_45e85910540086::t_7676ec91865aa8 12
+  s_45e85910540086::t_c4a4aae6d58bc6 69-82
+backend/app/rag/calibrate.py
+  s_45e85910540086::t_98d58b5f42b6a4 1-86,88-163
+backend/pyproject.toml
+  s_45e85910540086::t_8de15fa11cbaa2 25-32
+backend/app/ingest/pipeline.py
+  s_45e85910540086::t_d2e456994c8e76 254-258
+gateway/litellm_config.yaml
+  s_45e85910540086::t_6fcf66758c9f2f 1-40
+scripts/start-gateway.sh
+  s_45e85910540086::t_7edebf7062ae9f 1-52
+README.md
+  s_45e85910540086::t_71c34e848dc8d9 202,212-227
+.env.example
+  s_45e85910540086::t_feaa007928c23a 119-126
+  s_45e85910540086::t_46d19c269954dd 78-88
+  s_45e85910540086::t_707aeab9b54add 99-107
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "1.6.9",
+  "base_commit_sha": "8e8e6331c7522169790e3a3e2f939419c931c578",
+  "branch": "main",
+  "prompts": {
+    "s_45e85910540086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cbad96b-158a-4224-a682-9e21d09184a4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rogerdemello <rogerdemello289@gmail.com>",
+      "messages_url": "cas:d8219f6ec36a301ab47465c910dc4458f8c2598dd9a3a48974fc15523ef928fa",
+      "total_additions": 606,
+      "total_deletions": 23,
+      "accepted_lines": 605,
+      "overriden_lines": 1
+    }
+  },
+  "sessions": {
+    "s_45e85910540086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cbad96b-158a-4224-a682-9e21d09184a4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rogerdemello <rogerdemello289@gmail.com>",
+      "messages_url": "cas:d8219f6ec36a301ab47465c910dc4458f8c2598dd9a3a48974fc15523ef928fa",
+      "stats": {
+        "total_additions": 606,
+        "total_deletions": 23,
+        "accepted_lines": 605,
+        "overriden_lines": 1,
+        "files": {
+          ".env.example": {
+            "total_additions": 28,
+            "total_deletions": 9,
+            "accepted_lines": 28,
+            "overriden_lines": 0
+          },
+          "README.md": {
+            "total_additions": 17,
+            "total_deletions": 2,
+            "accepted_lines": 17,
+            "overriden_lines": 0
+          },
+          "backend/app/core/config.py": {
+            "total_additions": 43,
+            "total_deletions": 1,
+            "accepted_lines": 43,
+            "overriden_lines": 0
+          },
+          "backend/app/ingest/pipeline.py": {
+            "total_additions": 5,
+            "total_deletions": 1,
+            "accepted_lines": 5,
+            "overriden_lines": 0
+          },
+          "backend/app/rag/calibrate.py": {
+            "total_additions": 163,
+            "total_deletions": 0,
+            "accepted_lines": 162,
+            "overriden_lines": 1
+          },
+          "backend/app/rag/retrieval.py": {
+            "total_additions": 3,
+            "total_deletions": 1,
+            "accepted_lines": 3,
+            "overriden_lines": 0
+          },
+          "backend/pyproject.toml": {
+            "total_additions": 8,
+            "total_deletions": 0,
+            "accepted_lines": 8,
+            "overriden_lines": 0
+          },
+          "docs/architecture.md": {
+            "total_additions": 24,
+            "total_deletions": 9,
+            "accepted_lines": 24,
+            "overriden_lines": 0
+          },
+          "gateway/README.md": {
+            "total_additions": 115,
+            "total_deletions": 0,
+            "accepted_lines": 115,
+            "overriden_lines": 0
+          },
+          "gateway/clamp.py": {
+            "total_additions": 47,
+            "total_deletions": 0,
+            "accepted_lines": 47,
+            "overriden_lines": 0
+          },
+          "gateway/litellm_config.yaml": {
+            "total_additions": 40,
+            "total_deletions": 0,
+            "accepted_lines": 40,
+            "overriden_lines": 0
+          },
+          "scripts/start-gateway.ps1": {
+            "total_additions": 61,
+            "total_deletions": 0,
+            "accepted_lines": 61,
+            "overriden_lines": 0
+          },
+          "scripts/start-gateway.sh": {
+            "total_additions": 52,
+            "total_deletions": 0,
+            "accepted_lines": 52,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
