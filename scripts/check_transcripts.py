@@ -22,13 +22,12 @@ Exit codes: 0 clean, 1 a credential fragment was found, 2 nothing to check.
 
 from __future__ import annotations
 
-import re
 import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 
-from export_agent_transcript import (  # noqa: E402
+from export_agent_transcript import (
     MIN_SECRET_FRAGMENT,
     OUTPUT_DIR,
     REPO_ROOT,

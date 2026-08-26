@@ -299,7 +299,7 @@ def convert(path: Path) -> tuple[str, Stats]:
                 out.append("\n".join(rendered))
             else:
                 stats.user_turns += 1
-                out.append(f"\n---\n\n### ðŸ‘¤ User\n\n" + "\n\n".join(rendered))
+                out.append("\n---\n\n### ðŸ‘¤ User\n\n" + "\n\n".join(rendered))
 
         elif entry_type == "assistant":
             rendered = render_content(content, stats)
