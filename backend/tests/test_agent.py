@@ -379,6 +379,44 @@ class TestEssayOutlineParsing:
         assert plan.title == "Bolded title"
         assert plan.sections[0].heading == "First"
 
+    def test_tolerates_a_leading_separator(self):
+        """Observed live: llama3.2 puts the pipe *before* the heading.
+
+        Taking the segment before the separator yielded an empty heading, every
+        section was dropped, and the outline silently fell back to a generic
+        skeleton.
+        """
+        plan = _parse_line_outline(
+            "TITLE: Growth loops\nHOOK: A hook.\n"
+            "1. | The Myth of Virality\n"
+            "2. | | The Role of Data\n"
+            "3. | Continuous Testing\n"
+        )
+        assert plan is not None
+        assert [s.heading for s in plan.sections] == [
+            "The Myth of Virality",
+            "The Role of Data",
+            "Continuous Testing",
+        ]
+
+    def test_rejoins_a_split_takeaway_label(self):
+        plan = _parse_line_outline(
+            "TITLE: x\nHOOK: y\n1. A\n2. B\n3. Your takeaway: | map one loop this week\n"
+        )
+        assert plan.sections[-1].heading == "Your takeaway: map one loop this week"
+
+    def test_plain_headings_without_separators(self):
+        """The format the prompt now actually asks for."""
+        plan = _parse_line_outline(
+            "TITLE: Growth loops\nHOOK: A hook.\n"
+            "1. Where funnels break down\n2. What a loop is\n3. Your takeaway: draw one\n"
+        )
+        assert [s.heading for s in plan.sections] == [
+            "Where funnels break down",
+            "What a loop is",
+            "Your takeaway: draw one",
+        ]
+
     def test_missing_title_and_hook_still_parses(self):
         plan = _parse_line_outline("1. A | x\n2. B | y\n3. C | z\n")
         assert plan is not None

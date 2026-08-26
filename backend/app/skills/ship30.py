@@ -48,18 +48,20 @@ OUTLINE_SYSTEM = """You are planning a Ship 30 for 30 style long-form essay of a
 
 Reply in EXACTLY this format. No preamble, no explanation, no JSON, no code fences.
 
-TITLE: <headline: clear not clever, names who it is for and what it promises>
-HOOK: <ONE sentence. Declarative, a question, a controversial opinion, a moment in time, a vulnerable statement, or a weird insight. No context-setting.>
-1. <section heading> | <the single point this section makes>
-2. <section heading> | <the single point this section makes>
-3. <section heading> | <the single point this section makes>
-4. <section heading> | <the single point this section makes>
-5. Your takeaway: <heading> | <one specific thing the reader can do tomorrow>
+TITLE: a headline that is clear not clever, and names what the reader gets
+HOOK: ONE sentence. Declarative, a question, a controversial opinion, a moment in time, a vulnerable statement, or a weird insight. No context-setting.
+1. First section heading
+2. Second section heading
+3. Third section heading
+4. Fourth section heading
+5. Your takeaway: what to do tomorrow
 
 Rules:
-- Exactly 5 numbered sections.
-- Section 5 is always the takeaway and its heading must contain "takeaway".
-- Each section makes ONE point. If two points belong together, merge them.
+- The TITLE line and the HOOK line are REQUIRED. Write both before the numbered list. An outline without them is incomplete.
+- Exactly 5 numbered sections, one heading per line.
+- Write the heading directly after the number. Do not add any other punctuation or separators.
+- Section 5 always begins "Your takeaway:".
+- Each heading names ONE point the section will make.
 - Base every section on the supplied source passages."""
 
 SECTION_SYSTEM = """You are writing ONE section of a Ship 30 for 30 style essay. Write only this section.
@@ -121,11 +123,27 @@ def _parse_line_outline(text: str) -> EssayPlan | None:
 
     sections: list[EssaySection] = []
     for _number, body in SECTION_RE.findall(text):
-        heading, _, point = body.partition("|")
-        heading = heading.strip().lstrip("#").strip(" *")
-        if not heading:
+        # The prompt no longer asks for a separator, but models add one anyway
+        # and put it in surprising places. Observed live from llama3.2:
+        #
+        #   1. | The Myth of Virality: how growth loops actually work
+        #   2. | | The Role of Data in Identifying Growth Loops
+        #
+        # Splitting on "|" and taking the part *before* it yielded an empty
+        # heading, every section was skipped, and the whole outline fell back
+        # to a generic skeleton. Take the first non-empty segment instead.
+        parts = [p.strip().lstrip("#").strip(" *") for p in body.split("|")]
+        parts = [p for p in parts if p]
+        if not parts:
             continue
-        sections.append(EssaySection(heading=heading[:120], point=point.strip()[:200], sources=[]))
+
+        heading, point = parts[0], (parts[1] if len(parts) > 1 else "")
+        # "Your takeaway: | what to do tomorrow" — the label and its heading
+        # were split across the separator; rejoin them.
+        if heading.endswith(":") and point:
+            heading, point = f"{heading} {point}", ""
+
+        sections.append(EssaySection(heading=heading[:120], point=point[:200], sources=[]))
 
     if len(sections) < 3:
         return None
@@ -315,10 +333,13 @@ async def generate_essay(
             f"Full outline (for context — do NOT write these other sections):\n{outline_context}\n\n"
             f"Write section {index}: \"{section.heading}\"\n"
             f"The single point this section makes: {section.point}\n"
-            # Budget for the hook and headings, and aim slightly under: a live
-            # run overshot at 1,490 words against a 1,150-1,350 target, because
-            # sections reliably run long rather than short.
-            f"Target length: about {1150 // len(plan.sections)} words. Do not exceed it.\n\n"
+            # Tuning history, both measured against llama3.2:
+            #   1250/n + no ceiling  -> 1,490 words (over the 1,150-1,350 band)
+            #   1150/n + "do not exceed" -> 857 words (well under)
+            # The ceiling instruction suppressed output far more than the
+            # number raised it, so the target goes back up and the hard ceiling
+            # comes off, leaving a soft range.
+            f"Target length: {1300 // len(plan.sections)} to {1500 // len(plan.sections)} words.\n\n"
             f"Sources:\n\n{sources_block}"
         )
 
