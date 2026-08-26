@@ -1,0 +1,52 @@
+[project]
+name = "lenny-growth-assistant"
+version = "0.1.0"
+description = "Grounded conversational assistant over Lenny's Podcast transcripts"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn[standard]>=0.32.0",
+    "pydantic>=2.9.0",
+    "pydantic-settings>=2.6.0",
+    "asyncpg>=0.30.0",
+    "httpx>=0.27.0",
+    "structlog>=24.4.0",
+    "pyyaml>=6.0.2",
+    "nh3>=0.2.18",
+    "python-dotenv>=1.0.1",
+]
+
+[project.optional-dependencies]
+# The Claude Agent SDK runtime. Optional so the app installs and runs without
+# it — `AGENT_RUNTIME=claude_sdk` reports a clear error if it is missing.
+agent-sdk = [
+    "claude-agent-sdk>=0.1.0",
+]
+dev = [
+    "pytest>=8.3.0",
+    "pytest-asyncio>=0.24.0",
+    "ruff>=0.7.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["app"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+filterwarnings = ["ignore::DeprecationWarning"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+# B008: FastAPI's Depends()/Query() defaults are the framework's idiom.
+# E501: most overruns are user-facing hint strings and SQL, where wrapping
+#       hurts readability more than the long line does.
+ignore = ["B008", "E501"]

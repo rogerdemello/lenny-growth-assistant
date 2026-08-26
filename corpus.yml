@@ -1,0 +1,75 @@
+# Corpus selection for The Lenny Growth Assistant
+#
+# The transcripts repo holds 303 episode folders. Embedding all of them on CPU
+# takes 1-2 hours and buys little for a demo, so the corpus is deliberately
+# bounded — and bounded *reproducibly*, so anyone re-running ingestion gets the
+# same knowledge base.
+#
+# Selection runs in three passes:
+#
+#   1. EXCLUDE anything in `exclude`, then drop episodes shorter than
+#      INGEST_MIN_DURATION_SECONDS (default 1800). The repo mixes 4-minute
+#      YouTube shorts in with 90-minute interviews; the shorts are citation-poor
+#      and measurably hurt retrieval precision.
+#   2. PIN the slugs below. These are the episodes the assistant should be good
+#      at — the growth, pricing, positioning and PM canon. They are ingested
+#      first and are never dropped by the episode cap.
+#   3. FILL the remaining budget (INGEST_MAX_EPISODES) with the most recently
+#      published qualifying episodes.
+#
+# To ingest everything instead:  python -m app.ingest.pipeline --all
+#
+# The result of any run is written to INGESTED.md — that file, not this one, is
+# the record of what the assistant actually knows.
+
+source:
+  repo: ChatPRD/lennys-podcast-transcripts
+  ref: main
+
+# Ingested first, never cut. Chosen for topical coverage of the questions this
+# assistant exists to answer, not for popularity.
+pinned:
+  # Growth strategy and frameworks
+  - brian-balfour        # growth frameworks, model-market fit
+  - elena-verna          # product-led growth
+  - casey-winters        # growth, retention, marketplaces
+  - sean-ellis           # growth process, the PMF survey
+  - dan-hockenmaier      # growth strategy
+  - bangaly-kaba         # growth at scale
+  - hila-qu              # PLG metrics
+  - andy-johns           # growth at Facebook/Twitter/Quora
+
+  # Pricing and monetization
+  - madhavan-ramanujam   # pricing, Monetizing Innovation
+  - patrick-campbell     # pricing research, ProfitWell
+
+  # Positioning and go-to-market
+  - april-dunford        # positioning
+  - jason-m-lemkin       # B2B SaaS go-to-market
+  - eli-schwartz         # SEO as a growth channel
+
+  # Product management craft
+  - marty-cagan          # product operating model
+  - shreyas-doshi        # product strategy, prioritization
+  - teresa-torres        # continuous discovery
+  - rahul-vohra          # product-market fit at Superhuman
+  - julie-zhuo           # product leadership
+  - gibson-biddle        # product strategy, DHM
+  - lane-shackleton      # product execution
+
+# Not episodes. These slugs hold compilations, teasers, or repo scaffolding and
+# would pollute citations with content that has no single attributable source.
+exclude:
+  - eoy-review
+  - failure
+  - interview-q-compilation
+  - teaser_2021
+  - melissa
+  - vijay
+  - crystal-w
+  - inbal-s
+  - gergely
+  - hamelshreya
+  - fei-fei
+  - yamashata
+  - shweta-shriva
