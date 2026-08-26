@@ -70,8 +70,8 @@ Formatting rules, which are not optional:
 - Start with the H2 heading exactly as given, on its own line, prefixed with "## ".
 - Open the section with a SINGLE-sentence paragraph. Close it with a SINGLE-sentence paragraph.
 - Between them use 1/3/1 rhythm: alternate paragraph lengths. Never 2/2/2, never 5/5/5, never one sentence per paragraph throughout.
-- No paragraph exceeds 5 sentences.
-- If you list anything, make it a bulleted list.
+- HARD LIMIT: no paragraph may exceed 5 sentences. Count them. A long paragraph must be split, not compressed.
+- Whenever you name three or more things — reasons, steps, examples, mistakes, criteria — write them as a bulleted list, not as a sentence. This is the single most-violated rule; check for it before you finish.
 - Bold at most one phrase — the one a skimmer must not miss.
 - Second person. Active verbs. Concrete nouns.
 - Never write: delve, tapestry, "in the ever-evolving", "it's worth noting", "game-changer".
@@ -251,6 +251,19 @@ async def _plan_outline(
     )
 
 
+def _bullet_instruction(index: int, total: int) -> str:
+    """Require a bulleted list somewhere, deterministically.
+
+    "Use bullets when you list things" is advice, and models routinely write
+    1,200 words without a single list while believing they complied. Naming
+    two specific sections that MUST contain one turns a style preference into
+    an instruction, and the validator then has something to confirm.
+    """
+    if index == 2 or index == total:
+        return "This section MUST contain a bulleted list of at least three items."
+    return "Use a bulleted list if you enumerate anything."
+
+
 def _sources_footer(citations: list[Citation]) -> str:
     lines = ["", "## Sources", ""]
     for i, c in enumerate(citations, start=1):
@@ -339,7 +352,11 @@ async def generate_essay(
             # The ceiling instruction suppressed output far more than the
             # number raised it, so the target goes back up and the hard ceiling
             # comes off, leaving a soft range.
-            f"Target length: {1300 // len(plan.sections)} to {1500 // len(plan.sections)} words.\n\n"
+            f"Target length: {1300 // len(plan.sections)} to {1500 // len(plan.sections)} words.\n"
+            # The validator checks the essay as a whole, so at least one
+            # section has to carry a list. Measured: without this, a live run
+            # produced zero bullets across 1,220 words.
+            f"{_bullet_instruction(index, len(plan.sections))}\n\n"
             f"Sources:\n\n{sources_block}"
         )
 
