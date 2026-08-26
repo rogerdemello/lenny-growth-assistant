@@ -258,7 +258,7 @@ A deliberately bounded corpus also makes the refusal behaviour demonstrable: the
 
 ```bash
 cd backend
-uv run pytest                        # 193 tests in ~4s, no network or database required
+uv run pytest                        # 196 tests in ~5s, no network or database required
 uv run ruff check app                # lint
 uv run python -m app.rag.calibrate   # verify the grounding guarantee against the live corpus
 ```
@@ -312,7 +312,8 @@ The manual UI plan is in [`docs/manual-test-plan.md`](docs/manual-test-plan.md).
 Stated plainly rather than left to be discovered:
 
 - **`docker-compose.yml` is unverified.** No Docker on the authoring machine. `scripts/start.ps1` is the tested path.
-- **The Claude Agent SDK runtime has not run against the live API.** No Anthropic key was available; it is exercised through mocked-transport tests only.
+- **The Claude Agent SDK runtime has not run against Anthropic's own API.** No Anthropic key was available. It *has* been verified end-to-end against Azure OpenAI through the bundled gateway, including a real tool round-trip — see [`gateway/README.md`](gateway/README.md).
+- **Small-model output misses the Ship 30 word-count band.** Measured on `llama3.2`: the same prompt produced 1,490 words with a soft target and 857 with a hard ceiling. The validator reports the miss rather than hiding it, which is the point of having one — but a 3B model will not reliably hit a 200-word band. `ESSAY_PROVIDER=azure` does.
 - **Retrieval is vector-only.** The `tsvector` column and GIN index ship, and lexical search is used as a fallback when embeddings are unavailable, but RRF hybrid fusion is deliberately deferred — tuning it needs an evaluation set we did not build, and an untuned hybrid can rank worse than plain vector search. Reasoning in [`docs/design.md`](docs/design.md).
 - **Intent routing is a keyword dispatcher, not a classifier.** A deliberate choice for a 3B local model; the trade-off is documented in [`docs/design.md`](docs/design.md).
 - **No authentication.** Sessions carry a `user_id` and client metadata but there is no auth system. Out of scope, and noted in the PRD.
@@ -328,7 +329,8 @@ Stated plainly rather than left to be discovered:
 | [`docs/architecture.md`](docs/architecture.md) | Schema, endpoints, component boundaries, ingestion and retrieval flow, agent routing, model toggle, security, deployment |
 | [`docs/design.md`](docs/design.md) | UI/UX principles, information architecture, interaction states, responsive behaviour, accessibility, sanitizer allow/block table |
 | [`docs/manual-test-plan.md`](docs/manual-test-plan.md) | Step-by-step UI verification |
-| [`agent-transcripts/`](agent-transcripts/) | Coding-agent transcripts, including failed attempts and corrections |
+| [`agent-transcripts/`](agent-transcripts/) | Full session records, plus a narrative of the sixteen failures that actually changed the code — three sanitizer defects, a regex that silently dropped 10% of the corpus, a grounding guarantee that did not hold, and a leak-checker that leaked |
+| [`gateway/`](gateway/README.md) | The Anthropic-Messages gateway that lets the Claude Agent SDK runtime run against Azure OpenAI, and the three incompatibilities it had to solve |
 
 ---
 
