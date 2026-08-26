@@ -38,6 +38,12 @@ class FakeStore:
         self.sessions: dict[UUID, SessionRow] = {}
         self.messages: dict[UUID, list[dict[str, Any]]] = {}
         self.artifacts: dict[UUID, list[dict[str, Any]]] = {}
+        # Windows' clock resolution is ~15ms, so two sessions created in the
+        # same test tick share a timestamp and sort non-deterministically.
+        # A monotonic sequence breaks the tie the way distinct database
+        # timestamps would.
+        self._sequence = 0
+        self._order: dict[UUID, int] = {}
 
     async def create_session(self, **kwargs: Any) -> SessionRow:
         now = datetime.now(UTC)
@@ -54,6 +60,8 @@ class FakeStore:
         self.sessions[row.id] = row
         self.messages[row.id] = []
         self.artifacts[row.id] = []
+        self._sequence += 1
+        self._order[row.id] = self._sequence
         return row
 
     async def get_session(self, session_id: UUID) -> SessionRow:
@@ -64,7 +72,11 @@ class FakeStore:
         return self.sessions[session_id]
 
     async def list_sessions(self, **_: Any) -> list[SessionRow]:
-        return sorted(self.sessions.values(), key=lambda s: s.updated_at, reverse=True)
+        return sorted(
+            self.sessions.values(),
+            key=lambda s: (s.updated_at, self._order.get(s.id, 0)),
+            reverse=True,
+        )
 
     async def delete_session(self, session_id: UUID) -> bool:
         existed = self.sessions.pop(session_id, None) is not None
