@@ -22,6 +22,7 @@ Expect ~10–20 s per answer and 3–5 minutes for an essay on CPU. That is the 
 | 1.3 | Search the `/api/config` response for your API key | **Not present.** Only `configured: true/false` |
 | 1.4 | Open `http://localhost:5173` | Sidebar shows a green dot, `ollama`, `llama3.2`, and the episode/chunk counts |
 | 1.5 | `GET /docs` | Every endpoint documented with request/response schemas |
+| 1.6 | `cd backend && python -m app.rag.calibrate` | **10/10 in-domain answered, 10/10 out-of-domain refused.** Exits 0. This is the grounding guarantee, measured rather than assumed — see section 4. |
 
 ---
 
@@ -63,9 +64,12 @@ Expect ~10–20 s per answer and 3–5 minutes for an essay on CPU. That is the 
 | 4.2 | Read the response | States the archive does not cover it; names what it does cover; offers no answer |
 | 4.3 | Check the citation area | **Zero citations.** No empty container |
 | 4.4 | Try *"What's the capital of France?"* | Also refused, despite the model knowing the answer |
-| 4.5 | Check the server logs | `retrieval.below_floor` with the best score and the floor |
+| 4.5 | Check the server logs | Either `retrieval.below_floor` (rejected by the cheap floor) or `relevance.rejected` (rejected by the topic gate), with the score |
+| 4.6 | Try *"how does photosynthesis work?"* | Refused. This one is the reason the topic gate exists — it scores **0.62**, higher than several legitimate questions, so the score floor alone lets it through. |
 
-**Fails if:** the assistant answers either question. This is a defect, not a miss — it is the failure that destroys trust fastest.
+**Fails if:** the assistant answers any of these. This is a defect, not a miss — it is the failure that destroys trust fastest.
+
+**Note on why this needs two stages.** A cosine floor alone was measured and found insufficient: across a 20-question probe the separation gap was **−0.064**, meaning no threshold exists that admits every in-domain question while refusing every out-of-domain one. `python -m app.rag.calibrate` reproduces the measurement.
 
 ---
 

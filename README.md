@@ -258,9 +258,16 @@ A deliberately bounded corpus also makes the refusal behaviour demonstrable: the
 
 ```bash
 cd backend
-uv run pytest              # 153 tests in ~4s, no network or database required
-uv run pytest -v           # per-test detail
-uv run ruff check app      # lint
+uv run pytest                        # 193 tests in ~4s, no network or database required
+uv run ruff check app                # lint
+uv run python -m app.rag.calibrate   # verify the grounding guarantee against the live corpus
+```
+
+`calibrate` is the one that matters most. It probes 10 in-domain and 10 out-of-domain questions against the real index and **exits non-zero if any out-of-domain question is treated as grounded**. Run it after changing `EMBED_MODEL`, the task prefixes, the thresholds, or the corpus. Current result:
+
+```
+in-domain answered     10/10
+out-of-domain refused  10/10
 ```
 
 | Suite | Covers |

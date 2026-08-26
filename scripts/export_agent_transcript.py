@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+﻿#!/usr/bin/env python3
 """Export this project's coding-agent transcript to readable, scrubbed Markdown.
 
     python scripts/export_agent_transcript.py
@@ -120,10 +120,41 @@ MAX_TOOL_INPUT_CHARS = 2_000
 SECRET_VALUES: list[str] = []
 SECRET_PATTERNS: list[re.Pattern[str]] = []
 
-# A partial secret is still a leak. Debug commands routinely quote the first
-# 20 characters of a key, which literal replacement of the full value does not
-# match. Anything from this length up is redacted.
-MIN_SECRET_FRAGMENT = 12
+# A partial secret is still a leak. Debug commands routinely quote a prefix of
+# a key — one in this very session printed `value[:10]` — so literal
+# replacement of the full value is not enough.
+#
+# 12 was the first guess and it was still too generous: 10-character fragments
+# reached a public repository. 8 is short enough to catch a truncated display
+# and long enough not to shred unrelated text, *provided* it is applied only to
+# high-entropy values (see `_is_high_entropy`). Applying it to something like
+# `http://localhost:11434/v1` would redact every mention of localhost.
+MIN_SECRET_FRAGMENT = 6
+
+# Hosts and URLs that identify nothing and are safe to leave readable.
+_BENIGN_HOST_RE = re.compile(r"^https?://(localhost|127\.0\.0\.1|0\.0\.0\.0)(:\d+)?", re.IGNORECASE)
+
+
+def _is_high_entropy(value: str) -> bool:
+    """Is this an opaque credential rather than a readable URL or name?
+
+    Fragment matching is aggressive, so it is reserved for values where a
+    partial disclosure actually matters — keys, tokens, passwords, project
+    refs — rather than for endpoints an operator needs to be able to read.
+    """
+    if _BENIGN_HOST_RE.match(value):
+        return False
+    if "://" in value and not re.search(r"://[^/\s]+:[^@/\s]+@", value):
+        # A URL with no embedded credentials. Redact it whole, not by fragment.
+        return False
+    if re.search(r"\s", value):
+        return False
+    stripped = re.sub(r"[^A-Za-z0-9]", "", value)
+    # A long unbroken alphanumeric run with no spaces is an identifier, not
+    # prose. Requiring mixed case was too strict and let a Supabase project ref
+    # (`iuayyxcynambfgjomgsm` — all lowercase) through at 8-character
+    # granularity.
+    return len(stripped) >= 12
 
 
 def build_secret_patterns(values: list[str]) -> list[re.Pattern[str]]:
@@ -137,9 +168,11 @@ def build_secret_patterns(values: list[str]) -> list[re.Pattern[str]]:
     for value in values:
         if len(value) < MIN_SECRET_FRAGMENT:
             continue
-        head = re.escape(value[:MIN_SECRET_FRAGMENT])
-        # Opaque tokens continue with URL/base64-ish characters; URLs and hosts
-        # continue with path characters too.
+        # High-entropy credentials are matched from a short prefix, so a
+        # truncated or hand-typed fragment is caught too. Readable URLs are
+        # matched whole, so an operator can still see which endpoint was used.
+        head_len = MIN_SECRET_FRAGMENT if _is_high_entropy(value) else len(value)
+        head = re.escape(value[:head_len])
         patterns.append(re.compile(head + r"[A-Za-z0-9_\-.:/+=@]*"))
     return patterns
 
@@ -266,14 +299,14 @@ def convert(path: Path) -> tuple[str, Stats]:
                 out.append("\n".join(rendered))
             else:
                 stats.user_turns += 1
-                out.append(f"\n---\n\n### 👤 User\n\n" + "\n\n".join(rendered))
+                out.append(f"\n---\n\n### ðŸ‘¤ User\n\n" + "\n\n".join(rendered))
 
         elif entry_type == "assistant":
             rendered = render_content(content, stats)
             if not rendered:
                 continue
             stats.assistant_turns += 1
-            out.append("#### 🤖 Assistant\n\n" + "\n\n".join(rendered))
+            out.append("#### ðŸ¤– Assistant\n\n" + "\n\n".join(rendered))
 
     return "\n\n".join(out), stats
 
@@ -305,9 +338,9 @@ def main() -> None:
         target = OUTPUT_DIR / f"session-{index:02d}-{path.stem[:8]}.md"
         header = (
             f"# Coding agent transcript — session {index}\n\n"
-            f"Source: `{path.name}` · exported {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
-            f"{stats.user_turns} user turns · {stats.assistant_turns} assistant turns · "
-            f"{stats.tool_calls} tool calls · {stats.errors} tool errors\n\n"
+            f"Source: `{path.name}` Â· exported {datetime.now().strftime('%Y-%m-%d %H:%M')}\n\n"
+            f"{stats.user_turns} user turns Â· {stats.assistant_turns} assistant turns Â· "
+            f"{stats.tool_calls} tool calls Â· {stats.errors} tool errors\n\n"
             "> Secrets have been scrubbed automatically — see `scripts/export_agent_transcript.py`.\n"
             "> Tool inputs and results are truncated for readability.\n"
         )
@@ -346,3 +379,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
