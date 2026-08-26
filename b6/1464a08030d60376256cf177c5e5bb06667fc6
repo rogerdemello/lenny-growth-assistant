@@ -1,0 +1,73 @@
+docs/manual-test-plan.md
+  s_45e85910540086::t_51a423102b0504 1-173
+docs/PRD.md
+  s_45e85910540086::t_4cebfc27d627ec 1-210
+docs/architecture.md
+  s_45e85910540086::t_4463bb3b30db61 1-445
+docs/design.md
+  s_45e85910540086::t_3b0e9886def489 1-204
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "1.6.9",
+  "base_commit_sha": "b61464a08030d60376256cf177c5e5bb06667fc6",
+  "branch": "main",
+  "prompts": {
+    "s_45e85910540086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cbad96b-158a-4224-a682-9e21d09184a4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rogerdemello <rogerdemello289@gmail.com>",
+      "messages_url": "cas:7458ff4f11cb6d2e8a48d02bfda677ad55e1beb4e40588717d04eabc518b7b46",
+      "total_additions": 1032,
+      "total_deletions": 0,
+      "accepted_lines": 1032,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_45e85910540086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cbad96b-158a-4224-a682-9e21d09184a4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rogerdemello <rogerdemello289@gmail.com>",
+      "messages_url": "cas:7458ff4f11cb6d2e8a48d02bfda677ad55e1beb4e40588717d04eabc518b7b46",
+      "stats": {
+        "total_additions": 1032,
+        "total_deletions": 0,
+        "accepted_lines": 1032,
+        "overriden_lines": 0,
+        "files": {
+          "docs/PRD.md": {
+            "total_additions": 210,
+            "total_deletions": 0,
+            "accepted_lines": 210,
+            "overriden_lines": 0
+          },
+          "docs/architecture.md": {
+            "total_additions": 445,
+            "total_deletions": 0,
+            "accepted_lines": 445,
+            "overriden_lines": 0
+          },
+          "docs/design.md": {
+            "total_additions": 204,
+            "total_deletions": 0,
+            "accepted_lines": 204,
+            "overriden_lines": 0
+          },
+          "docs/manual-test-plan.md": {
+            "total_additions": 173,
+            "total_deletions": 0,
+            "accepted_lines": 173,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
