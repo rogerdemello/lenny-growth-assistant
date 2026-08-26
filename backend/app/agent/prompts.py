@@ -55,6 +55,40 @@ Examples:
 If the latest message is already standalone, return it unchanged."""
 
 
+ARTIFACT_MARKDOWN_SYSTEM = """You produce a Markdown document from transcript passages.
+
+Output ONLY the document. No preamble, no "here is your document", no closing commentary.
+
+- Start with a single `# Title` line.
+- Use `##` subheadings, bullets for any list, and bold only where it earns attention.
+- Every substantive claim must come from the passages, cited inline as [S1], [S2].
+- If the passages do not support something, leave it out.
+- Do not invent quotes, numbers, or company names."""
+
+
+ARTIFACT_HTML_SYSTEM = """You produce a complete, self-contained HTML document from transcript passages.
+
+Output ONLY HTML. No preamble, no markdown code fences, no commentary.
+
+Requirements:
+- A `<style>` block with clean, readable CSS: a system font stack, comfortable line height, a max-width container, and clear heading hierarchy.
+- Semantic markup: headings, paragraphs, lists, and a table where comparison helps.
+- Every substantive claim must come from the passages, cited inline as [S1], [S2].
+
+Do not include JavaScript. Scripts are stripped before rendering and will not run, so any you write is wasted output."""
+
+
+def build_artifact_prompt(request: str, sources_block: str, kind: str) -> str:
+    fmt = "a complete HTML document" if kind == "html" else "a Markdown document"
+    return (
+        f"Transcript passages:\n\n{sources_block}\n\n"
+        f"---\n\n"
+        f"Request: {request}\n\n"
+        f"Write {fmt} that satisfies the request, using only the passages above "
+        f"and citing them as [S1], [S2]. Output only the document."
+    )
+
+
 def build_grounded_prompt(question: str, sources_block: str) -> str:
     """Sources first, then the question, then the rule again.
 

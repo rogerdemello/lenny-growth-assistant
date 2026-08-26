@@ -36,23 +36,31 @@ from app.skills.ship30_validator import validate
 
 log = get_logger(__name__)
 
+# A line-based format, not JSON.
+#
+# llama3.2 at 3B fails to emit valid JSON often enough that the outline step
+# was falling back to a generic skeleton on most runs — observed live as
+# `ship30.outline_fallback`. A flat `KEY: value` format has no nesting, no
+# quoting rules and no bracket matching to get wrong, and small models produce
+# it reliably. The JSON parser is kept as a first attempt because cloud models
+# do emit clean JSON and it carries slightly more structure.
 OUTLINE_SYSTEM = """You are planning a Ship 30 for 30 style long-form essay of about 1,250 words.
 
-Return ONLY a JSON object, no prose, no code fence:
+Reply in EXACTLY this format. No preamble, no explanation, no JSON, no code fences.
 
-{
-  "title": "<headline: clear not clever, names the WHO and the WHAT, promises an outcome>",
-  "hook": "<ONE sentence. Declarative, a question, a controversial opinion, a moment in time, a vulnerable statement, or a weird insight. No context-setting.>",
-  "sections": [
-    {"heading": "<descriptive H2>", "point": "<the single argument this section makes>", "sources": ["S1", "S3"]}
-  ]
-}
+TITLE: <headline: clear not clever, names who it is for and what it promises>
+HOOK: <ONE sentence. Declarative, a question, a controversial opinion, a moment in time, a vulnerable statement, or a weird insight. No context-setting.>
+1. <section heading> | <the single point this section makes>
+2. <section heading> | <the single point this section makes>
+3. <section heading> | <the single point this section makes>
+4. <section heading> | <the single point this section makes>
+5. Your takeaway: <heading> | <one specific thing the reader can do tomorrow>
 
 Rules:
-- Exactly 5 sections.
-- The final section must be the takeaway: one specific thing the reader can do tomorrow. Its heading must contain the word "takeaway" or "do".
-- Every section must cite at least one source label that exists in the provided sources.
-- Each section makes ONE point. If two points belong together, merge them."""
+- Exactly 5 numbered sections.
+- Section 5 is always the takeaway and its heading must contain "takeaway".
+- Each section makes ONE point. If two points belong together, merge them.
+- Base every section on the supplied source passages."""
 
 SECTION_SYSTEM = """You are writing ONE section of a Ship 30 for 30 style essay. Write only this section.
 
@@ -89,6 +97,11 @@ class EssayPlan:
     sections: list[EssaySection]
 
 
+TITLE_RE = re.compile(r"^\s*TITLE\s*:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
+HOOK_RE = re.compile(r"^\s*HOOK\s*:\s*(.+)$", re.MULTILINE | re.IGNORECASE)
+SECTION_RE = re.compile(r"^\s*(\d)[.)]\s*(.+)$", re.MULTILINE)
+
+
 def _extract_json(text: str) -> dict[str, Any] | None:
     """Small models wrap JSON in prose or fences; take the outermost object."""
     text = re.sub(r"```(?:json)?", "", text).strip()
@@ -99,6 +112,29 @@ def _extract_json(text: str) -> dict[str, Any] | None:
         return json.loads(text[start : end + 1])
     except json.JSONDecodeError:
         return None
+
+
+def _parse_line_outline(text: str) -> EssayPlan | None:
+    """Parse the `TITLE:/HOOK:/1. heading | point` format."""
+    title_match = TITLE_RE.search(text)
+    hook_match = HOOK_RE.search(text)
+
+    sections: list[EssaySection] = []
+    for _number, body in SECTION_RE.findall(text):
+        heading, _, point = body.partition("|")
+        heading = heading.strip().lstrip("#").strip(" *")
+        if not heading:
+            continue
+        sections.append(EssaySection(heading=heading[:120], point=point.strip()[:200], sources=[]))
+
+    if len(sections) < 3:
+        return None
+
+    return EssayPlan(
+        title=(title_match.group(1).strip(" *") if title_match else "").strip(),
+        hook=(hook_match.group(1).strip(" *") if hook_match else "").strip(),
+        sections=sections[:6],
+    )
 
 
 def _fallback_plan(topic: str, citations: list[Citation]) -> EssayPlan:
@@ -123,6 +159,21 @@ def _fallback_plan(topic: str, citations: list[Citation]) -> EssayPlan:
     )
 
 
+def _outline_digest(citations: list[Citation], per_source: int = 220) -> str:
+    """A short digest for planning, not the full source block.
+
+    Measured: passing all ten full passages plus `max_tokens=900` made the
+    outline step take **275 seconds** — over a third of the total essay time,
+    spent before a single word of prose appeared. Planning needs to know what
+    the sources are *about*; it does not need to read them in full. The
+    sections themselves still receive the complete passages.
+    """
+    return "\n".join(
+        f"[S{i}] {c.guest}: {' '.join(c.text.split())[:per_source]}"
+        for i, c in enumerate(citations[:6], start=1)
+    )
+
+
 async def _plan_outline(
     topic: str, sources_block: str, citations: list[Citation], settings: Settings, provider_name: str
 ) -> EssayPlan:
@@ -132,15 +183,28 @@ async def _plan_outline(
             Message(role="system", content=OUTLINE_SYSTEM),
             Message(
                 role="user",
-                content=f"Topic: {topic}\n\nAvailable sources:\n\n{sources_block}\n\nReturn the JSON outline.",
+                content=(
+                    f"Topic: {topic}\n\n"
+                    f"What the sources cover:\n\n{_outline_digest(citations)}\n\n"
+                    f"Write the outline in the required format."
+                ),
             ),
         ],
         provider_name=provider_name,
         temperature=0.4,
-        max_tokens=900,
+        max_tokens=400,
         settings=settings,
     ):
         buf += delta.text
+
+    # Line format first — it is what the prompt asks for and what small models
+    # actually produce. JSON is tried second for cloud models that emit it.
+    if (plan := _parse_line_outline(buf)) is not None:
+        if not plan.title:
+            plan.title = topic
+        if not plan.hook:
+            plan.hook = f"Most advice about {topic} is repeated far more often than it is tested."
+        return plan
 
     data = _extract_json(buf)
     if not data or not isinstance(data.get("sections"), list) or not data["sections"]:
@@ -251,7 +315,10 @@ async def generate_essay(
             f"Full outline (for context — do NOT write these other sections):\n{outline_context}\n\n"
             f"Write section {index}: \"{section.heading}\"\n"
             f"The single point this section makes: {section.point}\n"
-            f"Target length: about {1250 // len(plan.sections)} words.\n\n"
+            # Budget for the hook and headings, and aim slightly under: a live
+            # run overshot at 1,490 words against a 1,150-1,350 target, because
+            # sections reliably run long rather than short.
+            f"Target length: about {1150 // len(plan.sections)} words. Do not exceed it.\n\n"
             f"Sources:\n\n{sources_block}"
         )
 

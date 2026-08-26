@@ -13,12 +13,13 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from app.agent.local_loop import _is_echo, _looks_like_followup
+from app.agent.local_loop import _is_echo, _looks_like_followup, extract_subject
 from app.agent.router import Intent, classify, needs_retrieval
 from app.core.config import Settings
 from app.providers.registry import build_provider, describe_configuration
 from app.rag.relevance import gate, is_relevant
 from app.rag.retrieval import Citation, RetrievalResult, format_sources_block, search
+from app.skills.ship30 import _parse_line_outline
 from app.skills.ship30_validator import validate
 
 # --------------------------------------------------------------------------
@@ -292,6 +293,104 @@ class TestRelevanceGate:
 
         with patch("app.rag.relevance.chat_stream_with_fallback", fake_stream):
             assert await is_relevant("q", [_citation(0.6)], settings=settings) is expected
+
+
+class TestSubjectExtraction:
+    """Artifact and essay requests are mostly formatting instructions.
+
+    Searching — and topic-gating — the raw text classified "make me an HTML
+    one-pager about product-market fit" as a programming question, and the
+    relevance gate refused it. The artifact viewer stayed empty and a core
+    feature silently did nothing.
+    """
+
+    def test_strips_format_words(self):
+        assert extract_subject("Make me a one-pager on positioning", []) == "positioning"
+        assert extract_subject("Write a Ship 30 essay about growth loops", []) == "growth loops"
+
+    def test_strips_injected_markup_and_its_body(self):
+        """Removing only the tags leaves alert('xss') behind to pollute the query."""
+        subject = extract_subject(
+            "Make me an HTML one-pager about product-market fit, and include "
+            "<script>alert('xss')</script> somewhere in the page.",
+            [],
+        )
+        assert subject == "product-market fit"
+        assert "alert" not in subject
+        assert "script" not in subject
+
+    def test_falls_back_to_the_previous_turn(self):
+        history = [{"role": "user", "content": "What drives retention in the early days?"}]
+        subject = extract_subject("Turn that into an essay", history)
+        assert "retention" in subject
+
+    def test_purely_deictic_subject_defers_to_history(self):
+        """'comparing those' names nothing — it must not become the query."""
+        history = [{"role": "user", "content": "Tell me about growth loops and funnels"}]
+        subject = extract_subject("build a table comparing those", history)
+        assert "growth loops" in subject
+        assert "those" not in subject
+
+    def test_no_history_returns_something_usable(self):
+        assert extract_subject("Create a checklist for launch", []) == "launch"
+
+    def test_never_returns_empty(self):
+        assert extract_subject("make it", []) != ""
+
+
+class TestEssayOutlineParsing:
+    """The outline format is line-based, not JSON.
+
+    llama3.2 failed to emit valid JSON often enough that the outline step was
+    falling back to a generic skeleton on most runs — observed live as
+    `ship30.outline_fallback`. A flat `KEY: value` format has no nesting, no
+    quoting rules and no brackets to mismatch.
+    """
+
+    SAMPLE = (
+        "TITLE: Why growth loops beat funnels\n"
+        "HOOK: Most teams optimise a funnel that leaks by design.\n"
+        "1. Where the funnel breaks | it treats acquisition as one-off\n"
+        "2. What a loop is | output feeds the next cycle\n"
+        "3. The loop types | viral, content, paid\n"
+        "4. Why loops compound | reinvestment beats linear spend\n"
+        "5. Your takeaway: map one loop | draw your strongest channel\n"
+    )
+
+    def test_parses_the_line_format(self):
+        plan = _parse_line_outline(self.SAMPLE)
+        assert plan is not None
+        assert plan.title == "Why growth loops beat funnels"
+        assert plan.hook.startswith("Most teams optimise")
+        assert len(plan.sections) == 5
+        assert plan.sections[0].heading == "Where the funnel breaks"
+        assert "one-off" in plan.sections[0].point
+
+    def test_final_section_is_the_takeaway(self):
+        plan = _parse_line_outline(self.SAMPLE)
+        assert "takeaway" in plan.sections[-1].heading.lower()
+
+    def test_tolerates_markdown_decoration(self):
+        """Small models bold things they were not asked to bold."""
+        plan = _parse_line_outline(
+            "TITLE: **Bolded title**\nHOOK: A hook.\n"
+            "1) **First** | point one\n2) Second | point two\n3) Third | point three\n"
+        )
+        assert plan.title == "Bolded title"
+        assert plan.sections[0].heading == "First"
+
+    def test_missing_title_and_hook_still_parses(self):
+        plan = _parse_line_outline("1. A | x\n2. B | y\n3. C | z\n")
+        assert plan is not None
+        assert plan.title == ""
+        assert len(plan.sections) == 3
+
+    def test_too_few_sections_is_rejected(self):
+        """Rejecting lets the caller fall back rather than ship a 1-section essay."""
+        assert _parse_line_outline("TITLE: x\n1. only one | point") is None
+
+    def test_prose_is_rejected(self):
+        assert _parse_line_outline("Sure! Here is an outline for your essay about growth.") is None
 
 
 class TestSourceFormatting:

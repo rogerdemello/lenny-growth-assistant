@@ -52,6 +52,90 @@ FOLLOWUP_RE = re.compile(
 )
 _NORMALISE_RE = re.compile(r"[^a-z0-9 ]+")
 
+# Which artifact format the user asked for. Defaults to Markdown.
+HTML_REQUEST_RE = re.compile(r"\b(html|web ?page|landing page|styled|css)\b", re.IGNORECASE)
+
+# Small models wrap output in fences even when told not to.
+_FENCE_RE = re.compile(r"^\s*```[a-zA-Z]*\s*\n(.*?)\n?\s*```\s*$", re.DOTALL)
+_MD_TITLE_RE = re.compile(r"^#\s+(.+)$", re.MULTILINE)
+_HTML_TITLE_RE = re.compile(r"<h1[^>]*>(.*?)</h1>|<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+def _strip_code_fence(text: str) -> str:
+    match = _FENCE_RE.match(text.strip())
+    return match.group(1) if match else text
+
+
+# Words that describe the *deliverable*, not the subject. Retrieval and the
+# topic gate both want the subject.
+#
+# Without this, "Make me an HTML one-pager about product-market fit, and
+# include <script>alert('xss')</script>" was classified as a programming
+# question and refused — the formatting instructions drowned out the topic.
+# Strip script/style blocks including their bodies. Removing only the tags
+# leaves `alert('xss')` behind as text, which then pollutes the search query.
+_EMBEDDED_CODE_RE = re.compile(r"<(script|style)\b[^>]*>.*?</\1\s*>", re.IGNORECASE | re.DOTALL)
+
+# Words that point at something rather than naming it. A "subject" made only of
+# these has not resolved anything and should defer to the previous turn.
+_DEICTIC = frozenset(
+    {"those", "these", "that", "this", "them", "it", "they", "comparing", "compare", "same", "both"}
+)
+
+_FORMAT_NOISE_RE = re.compile(
+    r"<[^>]*>"  # any remaining markup the user pasted
+    r"|\b(write|create|make|build|generate|draft|turn|give|put together|please|me|my"
+    r"|a|an|the|this|that|it|its|into|up|as|of|for|with|and|in|somewhere|include|including"
+    r"|ship\s*30|atomic|essay|article|post|piece|blog|newsletter"
+    r"|html|css|styled|web\s?page|page|one[- ]?pager|onepager|document|doc|summary"
+    r"|summarising|summarizing|summarise|summarize|table|checklist|brief|memo|outline|report"
+    r"|markdown|render|about|on)\b",
+    re.IGNORECASE,
+)
+
+
+def extract_subject(message: str, history: list[dict] | None = None) -> str:
+    """Reduce a request to the topic it is about.
+
+    "Make me an HTML one-pager about product-market fit" -> "product-market fit"
+
+    Falls back to the previous user turn when the request carries no subject of
+    its own ("turn that into an essay"), then to the raw message.
+    """
+    stripped = _EMBEDDED_CODE_RE.sub(" ", message)
+    stripped = _FORMAT_NOISE_RE.sub(" ", stripped)
+    stripped = re.sub(r"[^\w\s-]", " ", stripped)
+    stripped = re.sub(r"\s+", " ", stripped).strip(" .,:;!?-")
+
+    words = stripped.split()
+    # "comparing those" names nothing — defer to the previous turn instead.
+    resolved = [w for w in words if w.lower() not in _DEICTIC]
+    if len(resolved) >= 2:
+        return " ".join(resolved)
+
+    for item in reversed(history or []):
+        if item.get("role") == "user":
+            content = (item.get("content") or "").strip()
+            if content and content != message.strip():
+                return extract_subject(content) or content[:200]
+
+    return stripped or message
+
+
+def _artifact_title(content: str, kind: str) -> str:
+    """Name the artifact from its own heading, so the viewer tab is meaningful."""
+    if kind == "html":
+        match = _HTML_TITLE_RE.search(content)
+        if match:
+            raw = match.group(1) or match.group(2) or ""
+            return " ".join(_TAG_RE.sub("", raw).split())[:120]
+    else:
+        match = _MD_TITLE_RE.search(content)
+        if match:
+            return match.group(1).strip()[:120]
+    return ""
+
 
 def _normalise(text: str) -> str:
     return " ".join(_NORMALISE_RE.sub(" ", text.lower()).split())
@@ -107,9 +191,17 @@ class LocalToolLoopRuntime(AgentRuntime):
                     yield event
                 return
 
-            # ---- condense the question for retrieval --------------------
+            # ---- work out what to search for ----------------------------
             with Stage("condense", timings):
-                query = await self._condense(request, settings)
+                if intent is Intent.ARTIFACT:
+                    # An artifact request is mostly formatting instructions.
+                    # Searching (and topic-gating) the raw text classifies
+                    # "make me an HTML one-pager about PMF" as a programming
+                    # question. Strip to the subject instead.
+                    query = extract_subject(request.message, request.history)
+                    log.info("agent.subject", message=request.message[:80], subject=query[:80])
+                else:
+                    query = await self._condense(request, settings)
             if query != request.message:
                 log.info("agent.condensed", original=request.message[:80], query=query[:80])
                 yield AgentEvent("stage", {"stage": "condensed", "detail": f"Searching for: {query}"})
@@ -165,7 +257,32 @@ class LocalToolLoopRuntime(AgentRuntime):
             prompt_citations = citations[: settings.prompt_top_k]
             sources_block = format_sources_block(prompt_citations)
 
-            tools = openai_schemas(["create_artifact"]) if intent is Intent.ARTIFACT else None
+            # Artifact requests generate the document directly rather than
+            # hoping the model emits a correct tool call.
+            #
+            # Measured: asked for an HTML one-pager, llama3.2 answered in prose
+            # and never called create_artifact, so the viewer stayed empty and
+            # a core feature silently did nothing. The router has already
+            # established intent — routing it through tool-calling only adds a
+            # failure mode a 3B model cannot reliably clear.
+            if intent is Intent.ARTIFACT:
+                async for event in self._run_artifact(
+                    request, prompt_citations, sources_block, settings
+                ):
+                    yield event
+                yield AgentEvent(
+                    "done",
+                    {
+                        "intent": str(intent),
+                        "grounded": True,
+                        "citations": [c.to_dict() for c in prompt_citations],
+                        "provider": provider_used,
+                        "timings": timings,
+                    },
+                )
+                return
+
+            tools = None
 
             messages = [Message(role="system", content=prompts.ASSISTANT_SYSTEM)]
             messages += self._history_messages(request, limit=4)
@@ -429,24 +546,64 @@ class LocalToolLoopRuntime(AgentRuntime):
             },
         )
 
+    async def _run_artifact(self, request: AgentRequest, citations, sources_block: str, settings):  # noqa: ANN001, ANN201
+        """Generate a document and open it in the viewer, deterministically."""
+        kind = "html" if HTML_REQUEST_RE.search(request.message) else "markdown"
+        system = prompts.ARTIFACT_HTML_SYSTEM if kind == "html" else prompts.ARTIFACT_MARKDOWN_SYSTEM
+
+        yield AgentEvent(
+            "stage",
+            {"stage": "generating", "detail": f"Writing {'an HTML page' if kind == 'html' else 'a document'}"},
+        )
+
+        buf = ""
+        async for delta, _used in chat_stream_with_fallback(
+            [
+                Message(role="system", content=system),
+                Message(
+                    role="user",
+                    content=prompts.build_artifact_prompt(request.message, sources_block, kind),
+                ),
+            ],
+            temperature=0.4,
+            max_tokens=1800,
+            settings=settings,
+        ):
+            if delta.text:
+                buf += delta.text
+
+        content = _strip_code_fence(buf).strip()
+        if not content:
+            yield AgentEvent("token", {"text": "I couldn't generate that document. Try rephrasing the request."})
+            return
+
+        from app.artifacts.sanitize import sanitize_artifact
+
+        sanitized, report = sanitize_artifact(kind, content)
+        title = _artifact_title(content, kind) or request.message[:80]
+
+        yield AgentEvent(
+            "artifact",
+            {
+                "kind": kind,
+                "title": title,
+                "raw_content": content,
+                "sanitized_content": sanitized,
+                "sanitizer_report": report,
+            },
+        )
+
+        removed = report.get("removed") or []
+        note = f" I stripped {', '.join(removed)} before rendering it." if removed else ""
+        yield AgentEvent(
+            "token",
+            {"text": f"I've created **{title}** and opened it in the viewer.{note}"},
+        )
+
     def _essay_topic(self, request: AgentRequest) -> str:
-        """Work out what the essay is about.
+        """What the essay is about.
 
         "Turn that into an essay" carries no topic of its own — the subject is
-        in the previous turn, so fall back to the last user message.
+        in the previous turn, which `extract_subject` falls back to.
         """
-        text = request.message.strip()
-        stripped = re.sub(
-            r"\b(write|create|make|turn|draft|please|me|a|an|the|this|that|it|into|up|as|"
-            r"ship\s*30|atomic|essay|article|post|piece|blog|newsletter|about|on)\b",
-            " ",
-            text,
-            flags=re.IGNORECASE,
-        )
-        if len(stripped.split()) >= 3:
-            return re.sub(r"\s+", " ", stripped).strip(" .,:;!?")
-
-        for item in reversed(request.history):
-            if item.get("role") == "user" and (item.get("content") or "").strip() != text:
-                return (item["content"] or "").strip()[:300]
-        return text
+        return extract_subject(request.message, request.history)
