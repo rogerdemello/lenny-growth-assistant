@@ -1,0 +1,89 @@
+frontend/Dockerfile
+  s_45e85910540086::t_d1f9410e08915c 1-21
+docker-compose.yml
+  s_45e85910540086::t_0e92c765d4cab5 1-109
+scripts/start.ps1
+  s_45e85910540086::t_a24e9cf408a109 1-173
+scripts/start.sh
+  s_45e85910540086::t_4b33562a287c97 1-122
+backend/Dockerfile
+  s_45e85910540086::t_6199aaf6df58ad 1-29
+README.md
+  s_45e85910540086::t_7c7158f43fdf21 1-307
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "1.6.9",
+  "base_commit_sha": "b5d424130ae62931770a1daa5ef0d7894ac03594",
+  "branch": "main",
+  "prompts": {
+    "s_45e85910540086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cbad96b-158a-4224-a682-9e21d09184a4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rogerdemello <rogerdemello289@gmail.com>",
+      "messages_url": "cas:9f1d2773b75473b97128418bc9509f3bd4393e6d71680104059a53ffdf90ceb7",
+      "total_additions": 761,
+      "total_deletions": 0,
+      "accepted_lines": 761,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_45e85910540086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cbad96b-158a-4224-a682-9e21d09184a4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rogerdemello <rogerdemello289@gmail.com>",
+      "messages_url": "cas:9f1d2773b75473b97128418bc9509f3bd4393e6d71680104059a53ffdf90ceb7",
+      "stats": {
+        "total_additions": 761,
+        "total_deletions": 0,
+        "accepted_lines": 761,
+        "overriden_lines": 0,
+        "files": {
+          "README.md": {
+            "total_additions": 307,
+            "total_deletions": 0,
+            "accepted_lines": 307,
+            "overriden_lines": 0
+          },
+          "backend/Dockerfile": {
+            "total_additions": 29,
+            "total_deletions": 0,
+            "accepted_lines": 29,
+            "overriden_lines": 0
+          },
+          "docker-compose.yml": {
+            "total_additions": 109,
+            "total_deletions": 0,
+            "accepted_lines": 109,
+            "overriden_lines": 0
+          },
+          "frontend/Dockerfile": {
+            "total_additions": 21,
+            "total_deletions": 0,
+            "accepted_lines": 21,
+            "overriden_lines": 0
+          },
+          "scripts/start.ps1": {
+            "total_additions": 173,
+            "total_deletions": 0,
+            "accepted_lines": 173,
+            "overriden_lines": 0
+          },
+          "scripts/start.sh": {
+            "total_additions": 122,
+            "total_deletions": 0,
+            "accepted_lines": 122,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
