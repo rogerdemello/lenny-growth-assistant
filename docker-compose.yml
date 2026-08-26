@@ -1,0 +1,109 @@
+# =============================================================================
+# ⚠️  NOT VERIFIED ON THE AUTHORING MACHINE
+#
+# This file is provided as the reproducible one-command path for an evaluator
+# who has Docker. It was written against the documented behaviour of these
+# images but could not be executed here: the development machine is a
+# non-administrator Windows account, so Docker Desktop could not be installed.
+#
+# The path that IS verified end-to-end is:
+#
+#     ./scripts/start.ps1          (Windows)
+#     ./scripts/start.sh           (macOS / Linux)
+#
+# Saying so plainly is the point. An untested compose file presented as the
+# happy path is worse than none — it fails in front of a reviewer and takes the
+# credibility of everything else with it. See README.md § Running.
+# =============================================================================
+
+name: lenny-growth-assistant
+
+services:
+  db:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: lenny
+    ports:
+      - '5432:5432'
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U postgres -d lenny']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  # Ollama runs in a container here for reproducibility. If you already have
+  # Ollama on the host, drop this service and point OLLAMA_BASE_URL at
+  # http://host.docker.internal:11434/v1 instead — that avoids re-downloading
+  # several GB of model weights.
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - '11434:11434'
+    volumes:
+      - ollama:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: 30m
+      OLLAMA_MAX_LOADED_MODELS: '2'
+
+  # One-shot: pulls the chat and embedding models, then exits. The API waits
+  # for it so the first request does not race a model download.
+  ollama-pull:
+    image: ollama/ollama:latest
+    depends_on:
+      - ollama
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ['/bin/sh', '-c']
+    command: >
+      "ollama pull llama3.2 && ollama pull nomic-embed-text"
+    volumes:
+      - ollama:/root/.ollama
+    restart: 'no'
+
+  api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+      ollama-pull:
+        condition: service_completed_successfully
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/lenny
+      OLLAMA_BASE_URL: http://ollama:11434/v1
+      LLM_PROVIDER: ollama
+      LLM_MODEL: llama3.2
+      EMBED_PROVIDER: ollama
+      EMBED_MODEL: nomic-embed-text
+      LOG_FORMAT: json
+      CORS_ORIGINS: http://localhost:5173,http://localhost:4173
+    ports:
+      - '8000:8000'
+    volumes:
+      # Skills and the corpus policy are read from disk at runtime, so mounting
+      # them means editing SKILL.md does not require a rebuild.
+      - ./.claude:/app/.claude:ro
+      - ./corpus.yml:/app/corpus.yml:ro
+    # Applies migrations before serving. Idempotent, so restarts are safe.
+    command: >
+      sh -c "python -m app.db.migrate && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  web:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    depends_on:
+      - api
+    environment:
+      VITE_API_BASE_URL: http://localhost:8000
+    ports:
+      - '5173:80'
+
+volumes:
+  pgdata:
+  ollama:
