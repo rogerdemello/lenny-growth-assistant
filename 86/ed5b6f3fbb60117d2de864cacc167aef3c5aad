@@ -1,0 +1,63 @@
+agent-transcripts/README.md
+  s_45e85910540086::t_78e74129cc909b 147-170
+scripts/export_agent_transcript.py
+  s_45e85910540086::t_6d942536da3f58 51-54,56-60,65-112
+  s_45e85910540086::t_5434ab6efcfd17 282,284,286-289
+  s_45e85910540086::t_8d48497dd2a016 328-330
+  s_45e85910540086::t_673f343486cdee 121,123-126,128-146,148-150
+  s_45e85910540086::t_4e7a7af0712c28 120,122,127
+  s_45e85910540086::t_fd7d58ba2c9dfb 283,285,290
+  s_45e85910540086::t_353a93c95b3a1a 318-325,333,336-339,342-344
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "autter_version": "1.6.9",
+  "base_commit_sha": "86ed5b6f3fbb60117d2de864cacc167aef3c5aad",
+  "branch": "main",
+  "prompts": {
+    "s_45e85910540086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cbad96b-158a-4224-a682-9e21d09184a4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rogerdemello <rogerdemello289@gmail.com>",
+      "messages_url": "cas:3a9b8245bd6dd84e1b02fe83f4c94b9fb640994495aa0780beaffe08723661c5",
+      "total_additions": 149,
+      "total_deletions": 19,
+      "accepted_lines": 140,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_45e85910540086": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0cbad96b-158a-4224-a682-9e21d09184a4",
+        "model": "claude-opus-5"
+      },
+      "human_author": "rogerdemello <rogerdemello289@gmail.com>",
+      "messages_url": "cas:3a9b8245bd6dd84e1b02fe83f4c94b9fb640994495aa0780beaffe08723661c5",
+      "stats": {
+        "total_additions": 149,
+        "total_deletions": 19,
+        "accepted_lines": 140,
+        "overriden_lines": 0,
+        "files": {
+          "agent-transcripts/README.md": {
+            "total_additions": 24,
+            "total_deletions": 0,
+            "accepted_lines": 24,
+            "overriden_lines": 0
+          },
+          "scripts/export_agent_transcript.py": {
+            "total_additions": 125,
+            "total_deletions": 19,
+            "accepted_lines": 116,
+            "overriden_lines": 0
+          }
+        }
+      }
+    }
+  }
+}
