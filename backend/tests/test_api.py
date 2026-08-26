@@ -21,7 +21,6 @@ from app.agent.runtime import AgentEvent
 from app.db.repository import SessionRow
 from app.main import app
 
-
 # --------------------------------------------------------------------------
 # In-memory persistence
 # --------------------------------------------------------------------------

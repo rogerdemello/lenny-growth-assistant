@@ -19,7 +19,6 @@ from app.providers.registry import build_provider, describe_configuration
 from app.rag.retrieval import Citation, RetrievalResult, format_sources_block, search
 from app.skills.ship30_validator import validate
 
-
 # --------------------------------------------------------------------------
 # Router
 # --------------------------------------------------------------------------
