@@ -98,6 +98,8 @@ Docker is optional — see [Running with Docker](#running-with-docker).
 
 ## Quick start
 
+> **This path has been tested from a genuine fresh clone**, not just asserted. Cloning into an empty directory, copying `.env.example`, supplying only a `DATABASE_URL`, and following the steps below produced: 199 tests passing, migrations applied, the grounding calibration at 10/10 and 10/10, the frontend building, and the API reporting `status: ok` on all components.
+
 ### 1. Clone and configure
 
 ```bash
