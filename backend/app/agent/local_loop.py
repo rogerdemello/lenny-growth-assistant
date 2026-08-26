@@ -42,6 +42,29 @@ log = get_logger(__name__)
 MAX_TOOL_ROUNDS = 3
 CITATION_RE = re.compile(r"\[S(\d+)\]")
 
+# Markers of a question that cannot stand on its own: it refers to something
+# established in an earlier turn.
+FOLLOWUP_RE = re.compile(
+    r"^\s*(what about|how about|and |but |what if|why |ok |okay |also )"
+    r"|\b(that|those|these|this|it|they|them|he|she|his|her|their|its|the same|instead)\b",
+    re.IGNORECASE,
+)
+_NORMALISE_RE = re.compile(r"[^a-z0-9 ]+")
+
+
+def _normalise(text: str) -> str:
+    return " ".join(_NORMALISE_RE.sub(" ", text.lower()).split())
+
+
+def _is_echo(condensed: str, original: str) -> bool:
+    """Did the model just hand the question back with the punctuation removed?"""
+    return _normalise(condensed) == _normalise(original)
+
+
+def _looks_like_followup(message: str) -> bool:
+    """Short, or carrying an unresolved reference to an earlier turn."""
+    return len(message.split()) <= 10 or bool(FOLLOWUP_RE.search(message))
+
 
 class LocalToolLoopRuntime(AgentRuntime):
     name = "local"
@@ -231,10 +254,25 @@ class LocalToolLoopRuntime(AgentRuntime):
             return request.message
 
         query = buf.strip().strip('"').split("\n")[0].strip()
-        # Guard against a model that explains instead of answering, or returns
-        # something degenerate. Falling back to the raw message is always safe.
+
+        # Guard against a model that explains instead of answering.
         if not query or len(query) > 300 or len(query) < 3:
-            return request.message
+            query = request.message
+
+        # A 3B model frequently "condenses" by echoing the input with the
+        # punctuation removed — observed: "What about for PLG?" -> "what about
+        # for PLG", which resolves nothing. When that happens, fall back to a
+        # deterministic rewrite: concatenate the previous user turn. It is
+        # cruder than a real rewrite but it reliably puts the missing subject
+        # into the query, which is the only thing retrieval needs.
+        if _is_echo(query, request.message) and _looks_like_followup(request.message):
+            previous = next(
+                (h.get("content", "") for h in reversed(recent) if h.get("role") == "user"), ""
+            )
+            if previous:
+                query = f"{previous.strip()[:200]} {request.message.strip()}"
+                log.info("agent.condense_fallback", query=query[:120])
+
         return query
 
     async def _plain_reply(self, system: str, request: AgentRequest, settings, *, max_tokens: int):  # noqa: ANN001, ANN201

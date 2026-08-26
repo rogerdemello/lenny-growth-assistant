@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from app.agent.local_loop import _is_echo, _looks_like_followup
 from app.agent.router import Intent, classify, needs_retrieval
 from app.core.config import Settings
 from app.providers.registry import build_provider, describe_configuration
@@ -84,6 +85,55 @@ class TestRouter:
         assert needs_retrieval(Intent.ESSAY)
         assert needs_retrieval(Intent.ARTIFACT)
         assert not needs_retrieval(Intent.SMALLTALK)
+
+
+class TestFollowUpCondensation:
+    """A 3B model often 'condenses' by echoing the input without punctuation.
+
+    Observed against the live model: "What about for PLG?" came back as
+    "what about for PLG" — which resolves nothing, so retrieval had no subject
+    to search for. These guards detect that and fall back to a deterministic
+    rewrite that concatenates the previous user turn.
+    """
+
+    @pytest.mark.parametrize(
+        "condensed,original",
+        [
+            ("what about for PLG", "What about for PLG?"),
+            ("What about for PLG", "what about for plg?"),
+            ("  what about for PLG.  ", "What about for PLG?"),
+        ],
+    )
+    def test_echo_is_detected(self, condensed: str, original: str):
+        assert _is_echo(condensed, original)
+
+    @pytest.mark.parametrize(
+        "condensed,original",
+        [
+            ("product-led growth pricing strategy", "What about for PLG?"),
+            ("Elena Verna retention growth loops", "what did she say about that?"),
+        ],
+    )
+    def test_a_real_rewrite_is_not_an_echo(self, condensed: str, original: str):
+        assert not _is_echo(condensed, original)
+
+    @pytest.mark.parametrize(
+        "message",
+        [
+            "What about for PLG?",
+            "what did she say about that?",
+            "And how about retention?",
+            "why is that",
+            "ok but what if the market is smaller",
+        ],
+    )
+    def test_followups_are_recognised(self, message: str):
+        assert _looks_like_followup(message)
+
+    def test_a_standalone_question_is_not_a_followup(self):
+        assert not _looks_like_followup(
+            "How should a founder approach pricing when entering a crowded enterprise market"
+        )
 
 
 # --------------------------------------------------------------------------
