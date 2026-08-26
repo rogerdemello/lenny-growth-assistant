@@ -248,16 +248,52 @@ Token counting is `len(text) / 4`, not a real tokenizer. Bringing in tiktoken fo
 ## Retrieval flow
 
 ```
-question ──► condense ──► embed ──► pgvector cosine top-k ──► score floor ──► citations
-              (if any        │                                     │
-               history)      └── on embedding failure ──► tsvector lexical fallback
-                                                                   │
-                                                       below floor ─┴──► refusal path
+question ─► condense ─► embed ─► pgvector cosine top-k ─► score floor ─► relevance gate ─► citations
+             (if any      │                                    │              │
+              history)    └─ on embedding failure               │        (only when
+                             └► tsvector lexical fallback       │         score < 0.72)
+                                                                │              │
+                                                    below floor ─┴──────────────┴─► refusal path
 ```
 
 **Condensation** runs only when history exists — the first message is already standalone, and skipping saves ~10 s of prefill on CPU. It resolves pronouns and references so "what about for PLG?" becomes a query that retrieves correctly. If it fails or returns something degenerate, it falls back to the raw message, which is always safe.
 
-**The score floor is a product decision, not a tuning knob.** Below `RETRIEVAL_SCORE_FLOOR`, `search()` returns *nothing* rather than the least-bad match. That is what lets the layer above say "the transcripts don't cover this" — the refusal prompt runs with no sources available, so there is nothing to answer from even if the model wanted to.
+### Grounding is enforced in two stages, because one is provably not enough
+
+The original design assumed a cosine score floor was sufficient. **Calibrating against the real corpus proved it is not.** Measured across a 20-question probe (`python -m app.rag.calibrate`):
+
+```
+IN-DOMAIN   0.5575  how do I run continuous product discovery
+OUT-DOMAIN  0.6216  how does photosynthesis work
+
+separation gap  -0.064   (NOT separable)
+```
+
+An out-of-domain question scored *higher* than a legitimate one. The cause is structural, not a bad threshold: `nomic-embed-text` partly matches on question **shape** ("how does X work") rather than topic, so a well-formed question about anything lands near well-formed questions about product management. **No single threshold can separate those two sets.**
+
+Shipping a floor alone would have meant either answering "how does photosynthesis work" from the transcripts, or refusing a question about continuous discovery. Both are unacceptable, and only measurement revealed it — a plausible-looking 0.35 had been in the config for hours.
+
+So grounding runs in two stages:
+
+| Stage | Cost | What it does |
+|---|---|---|
+| **Score floor** (`RETRIEVAL_SCORE_FLOOR`, 0.45) | free | Discards obvious junk. Deliberately low. |
+| **Relevance gate** (`app/rag/relevance.py`) | one ~5-token LLM call | Runs only between the floor and `RETRIEVAL_CONFIDENT_SCORE` (0.72). Above that, results are trusted without checking, so the common case pays nothing. |
+
+**The gate classifies the question's topic, not whether the passages answer it.** The first version asked the harder, more obviously correct question — "do these passages answer this?" — and rejected 4 of 10 legitimate questions, including one scoring 0.70, because transcript passages are rambling and conversational and rarely look like a tidy answer. Topic classification is a far easier judgement for a 3B model, and it targets the actual failure mode: every leak was an out-of-*domain* question, not an in-domain question with weak passages. Weak passages are already handled — the answer prompt instructs the model to say when its sources fall short.
+
+The gate **fails open**. If it errors or returns something unparseable, the passages are kept. A retrieval layer that refuses whenever the model hiccups would be worse than one that occasionally passes weak sources.
+
+Result on the same probe, with `llama3.2` on CPU:
+
+```
+in-domain answered     10/10
+out-of-domain refused  10/10
+```
+
+**Both stages are product decisions, not tuning knobs.** When they refuse, `search()` returns *nothing* rather than the least-bad match — so the refusal prompt runs with no sources available and there is nothing to answer from even if the model wanted to.
+
+Re-run `python -m app.rag.calibrate` after any change to `EMBED_MODEL`, the task prefixes, or the corpus. It exits non-zero if the guarantee is broken.
 
 **Retrieve broadly, ground narrowly.** `RETRIEVAL_TOP_K` (8) passages become citation chips; `PROMPT_TOP_K` (4) enter the prompt. Measured on a Ryzen 7 7730U with no GPU: 8 passages cost ~22 s to first token, 4 cost ~11 s. Showing the user 8 sources is free; feeding the model 8 is not.
 

@@ -31,6 +31,7 @@ from dataclasses import dataclass
 from app.core.config import get_settings
 from app.core.logging import configure_logging
 from app.db.pool import close_pool, init_pool
+from app.rag.relevance import gate as relevance_gate
 from app.rag.retrieval import vector_search
 
 # Questions the corpus SHOULD answer. Drawn from the pinned episodes in
@@ -69,94 +70,123 @@ class Probe:
     query: str
     in_domain: bool
     best_score: float
+    # What the full two-stage pipeline decided, and which stage decided it.
+    grounded: bool = False
+    decided_by: str = ""
 
 
-async def probe_all(top_k: int = 8) -> list[Probe]:
+async def probe_all(top_k: int = 8, *, with_gate: bool = True) -> list[Probe]:
     settings = get_settings()
     results: list[Probe] = []
 
     for query, in_domain in [(q, True) for q in IN_DOMAIN] + [(q, False) for q in OUT_OF_DOMAIN]:
         citations = await vector_search(query, top_k=top_k, settings=settings)
         best = citations[0].score if citations else 0.0
-        results.append(Probe(query=query, in_domain=in_domain, best_score=best))
+        probe = Probe(query=query, in_domain=in_domain, best_score=best)
+
+        kept = [c for c in citations if c.score >= settings.retrieval_score_floor]
+        if not kept:
+            probe.grounded, probe.decided_by = False, "floor"
+        elif best >= settings.retrieval_confident_score:
+            probe.grounded, probe.decided_by = True, "confident"
+        elif not with_gate:
+            probe.grounded, probe.decided_by = True, "floor (gate skipped)"
+        else:
+            keep, _reason = await relevance_gate(query, kept, best, settings=settings)
+            probe.grounded, probe.decided_by = keep, "gate" if keep else "gate (rejected)"
+
+        results.append(probe)
 
     return results
 
 
-def report(probes: list[Probe], current_floor: float) -> int:
+def report(probes: list[Probe], settings) -> int:  # noqa: ANN001
     in_scores = sorted(p.best_score for p in probes if p.in_domain)
     out_scores = sorted((p.best_score for p in probes if not p.in_domain), reverse=True)
 
     print("\nIN-DOMAIN (should be answered)")
     for p in sorted((p for p in probes if p.in_domain), key=lambda p: p.best_score):
-        print(f"  {p.best_score:.4f}  {p.query}")
+        mark = "ok " if p.grounded else "MISS"
+        print(f"  [{mark}] {p.best_score:.4f}  ({p.decided_by:<16}) {p.query}")
 
     print("\nOUT-OF-DOMAIN (should be refused)")
     for p in sorted((p for p in probes if not p.in_domain), key=lambda p: -p.best_score):
-        print(f"  {p.best_score:.4f}  {p.query}")
+        mark = "LEAK" if p.grounded else "ok "
+        print(f"  [{mark}] {p.best_score:.4f}  ({p.decided_by:<16}) {p.query}")
 
     worst_in, best_out = in_scores[0], out_scores[0]
     gap = worst_in - best_out
 
-    print("\n" + "=" * 62)
-    print(f"  worst in-domain    {worst_in:.4f}")
-    print(f"  best out-of-domain {best_out:.4f}")
-    print(f"  separation gap     {gap:+.4f}")
-    print("=" * 62)
+    print("\n" + "=" * 66)
+    print("  STAGE 1 — cosine score alone")
+    print(f"    worst in-domain    {worst_in:.4f}")
+    print(f"    best out-of-domain {best_out:.4f}")
+    print(f"    separation gap     {gap:+.4f}  " + ("(separable)" if gap > 0 else "(NOT separable)"))
 
     if gap <= 0:
-        print("\n  NOT SEPARABLE — no score floor can enforce the grounding guarantee.")
-        print("  Likely causes, in order of likelihood:")
-        print("    * the embedding model needs task prefixes and is not getting them")
-        print("      (nomic/e5/bge are asymmetric — check EMBED_QUERY_PREFIX)")
-        print("    * EMBED_MODEL is a poor fit for this corpus")
-        print("    * an 'out-of-domain' question is genuinely covered by the corpus")
+        print("    -> A single threshold cannot enforce grounding on this corpus.")
+        print("       This is why the relevance gate exists (app/rag/relevance.py).")
+    else:
+        print(f"    -> A floor alone would work here; anywhere in {best_out:.3f}-{worst_in:.3f}.")
+
+    missed = [p for p in probes if p.in_domain and not p.grounded]
+    leaked = [p for p in probes if not p.in_domain and p.grounded]
+    total_in = sum(1 for p in probes if p.in_domain)
+    total_out = sum(1 for p in probes if not p.in_domain)
+
+    print("\n  STAGE 2 — full pipeline (floor + relevance gate)")
+    print(f"    in-domain answered   {total_in - len(missed)}/{total_in}")
+    print(f"    out-of-domain refused {total_out - len(leaked)}/{total_out}")
+    print("=" * 66)
+
+    if leaked:
+        print("\n  FAILED: out-of-domain questions were treated as grounded:")
+        for p in leaked:
+            print(f"    {p.best_score:.4f} ({p.decided_by})  {p.query}")
+        print("\n  This is the grounding guarantee failing. Do not ship.")
         return 1
 
-    # Sit slightly below the midpoint. Refusing a real question is more visible
-    # and more annoying to a user than occasionally retrieving weak-but-related
-    # passages, and the prompt still instructs the model to say when sources do
-    # not answer the question.
-    recommended = round(best_out + gap * 0.4, 2)
-
-    print(f"\n  RECOMMENDED  RETRIEVAL_SCORE_FLOOR={recommended}")
-    print(f"  (any value in {best_out:.3f}–{worst_in:.3f} separates the two sets)")
-
-    if current_floor <= best_out:
-        print(f"\n  WARNING: the configured floor ({current_floor}) is at or below the best")
-        print("  out-of-domain score. Out-of-domain questions will be answered as if grounded.")
-        return 1
-    if current_floor >= worst_in:
-        print(f"\n  WARNING: the configured floor ({current_floor}) is at or above the worst")
-        print("  in-domain score. Legitimate questions will be refused.")
+    if missed:
+        print("\n  WARNING: in-domain questions were refused:")
+        for p in missed:
+            print(f"    {p.best_score:.4f} ({p.decided_by})  {p.query}")
+        print(f"\n  Lower RETRIEVAL_SCORE_FLOOR (currently {settings.retrieval_score_floor})")
+        print("  or soften the relevance gate prompt.")
         return 1
 
-    print(f"\n  The configured floor ({current_floor}) is inside the gap. OK.")
+    print("\n  PASS — every in-domain question answered, every out-of-domain question refused.")
     return 0
 
 
-async def main_async(top_k: int) -> int:
+async def main_async(top_k: int, with_gate: bool) -> int:
     settings = get_settings()
     await init_pool(settings.database_url)
     try:
-        print(f"embed model   : {settings.embed_model}")
-        print(f"query prefix  : {settings.query_prefix!r}")
-        print(f"doc prefix    : {settings.document_prefix!r}")
-        print(f"current floor : {settings.retrieval_score_floor}")
-        probes = await probe_all(top_k=top_k)
-        return report(probes, settings.retrieval_score_floor)
+        print(f"embed model      : {settings.embed_model}")
+        print(f"query prefix     : {settings.query_prefix!r}")
+        print(f"doc prefix       : {settings.document_prefix!r}")
+        print(f"score floor      : {settings.retrieval_score_floor}")
+        print(f"confident score  : {settings.retrieval_confident_score}")
+        print(f"relevance gate   : {'on' if with_gate else 'OFF'}")
+        probes = await probe_all(top_k=top_k, with_gate=with_gate)
+        return report(probes, settings)
     finally:
         await close_pool()
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Calibrate the retrieval score floor.")
+    parser = argparse.ArgumentParser(description="Calibrate retrieval grounding thresholds.")
     parser.add_argument("--top-k", type=int, default=8)
+    parser.add_argument(
+        "--no-gate",
+        action="store_true",
+        help="Measure the score floor in isolation, without the relevance gate.",
+    )
     args = parser.parse_args()
 
     settings = get_settings()
     configure_logging("WARNING", settings.log_format)
-    raise SystemExit(asyncio.run(main_async(args.top_k)))
+    raise SystemExit(asyncio.run(main_async(args.top_k, with_gate=not args.no_gate)))
 
 
 if __name__ == "__main__":

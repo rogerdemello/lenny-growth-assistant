@@ -41,7 +41,11 @@ Runs entirely on a local model. No API key required.
 
 **Grounded answers.** Ask a product or growth question and the assistant retrieves passages from ingested transcripts, answers from those passages only, and shows each one as a citation chip. Clicking a chip reveals the transcript excerpt and links to the exact second of the YouTube episode.
 
-**Honest refusal.** Ask something the archive does not cover and it says so instead of answering from the model's own knowledge. This is enforced by a similarity floor in retrieval, not by asking the model nicely — see [`retrieval.py`](backend/app/rag/retrieval.py).
+**Honest refusal.** Ask something the archive does not cover and it says so instead of answering from the model's own knowledge — enforced in code, not by asking the model nicely.
+
+This turned out to need two stages. A similarity floor alone **provably does not work**: measured against the real corpus, "how does photosynthesis work" scored 0.62 while a legitimate question about continuous product discovery scored 0.56, because the embedding partly matches question *shape* rather than topic. So a low floor discards obvious junk, and anything not confidently relevant gets one cheap topic-classification call. Measured result on `llama3.2` over CPU: **10/10 in-domain answered, 10/10 out-of-domain refused.**
+
+Reproduce it yourself with `python -m app.rag.calibrate`.
 
 **Follow-ups that work.** "What about for PLG?" is condensed into a standalone query before retrieval, so pronouns and references to earlier turns resolve correctly.
 
@@ -165,7 +169,8 @@ Every setting lives in `.env`. [`.env.example`](.env.example) documents all of t
 | `EMBED_PROVIDER` / `EMBED_MODEL` | `ollama` / `nomic-embed-text` | Changing these requires a re-index. |
 | `RETRIEVAL_TOP_K` | `8` | Passages retrieved and shown as citations. |
 | `PROMPT_TOP_K` | `4` | Passages actually placed in the prompt. |
-| `RETRIEVAL_SCORE_FLOOR` | `0.35` | Below this, the assistant refuses. Raise to make it more cautious. |
+| `RETRIEVAL_SCORE_FLOOR` | `0.45` | Cheap first filter. Below this, refuse outright. |
+| `RETRIEVAL_CONFIDENT_SCORE` | `0.72` | Above this, results are trusted without the relevance gate. Between the two, one cheap topic check decides. |
 | `INGEST_MAX_EPISODES` | `40` | Corpus size. |
 
 **Why `PROMPT_TOP_K` is lower than `RETRIEVAL_TOP_K`:** prefill dominates latency on CPU. Measured on a Ryzen 7 7730U with no GPU, 8 passages cost ~22 s to first token versus ~11 s for 4. Showing the user 8 citations is free; feeding the model 8 is not.
@@ -281,7 +286,11 @@ The manual UI plan is in [`docs/manual-test-plan.md`](docs/manual-test-plan.md).
 
 **Database connects, then stops.** Supabase free projects auto-pause after inactivity. Open the dashboard to wake it.
 
-**Every question is refused.** The corpus is empty. Run ingestion, then check `GET /health` shows `embedded_chunks > 0`.
+**Every question is refused.** Either the corpus is empty — run ingestion and check `GET /health` shows `embedded_chunks > 0` — or the thresholds are wrong for your embedding model. Run `python -m app.rag.calibrate`; it tells you which.
+
+**It answers questions it shouldn't.** Run `python -m app.rag.calibrate`. If it reports leaks, `RETRIEVAL_SCORE_FLOOR` is too low for your embedding model, or the relevance gate is failing open because the chat provider is unreachable.
+
+**I changed `EMBED_MODEL` and retrieval got worse.** Two things to check. Re-index (`--force`) — vectors from different models are not comparable. And confirm the task prefixes: asymmetric models like nomic, e5 and bge are *trained* with `search_query:`/`search_document:` prefixes and are measurably miscalibrated without them. Defaults are inferred from the model name; override with `EMBED_QUERY_PREFIX`/`EMBED_DOCUMENT_PREFIX`.
 
 **Answers are very slow.** Expected on CPU: roughly 7–9 tokens/sec on a 3B model, ~11 s to first token for a typical prompt. Lower `PROMPT_TOP_K`, or set `LLM_PROVIDER=azure`.
 

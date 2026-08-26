@@ -17,6 +17,7 @@ from app.agent.local_loop import _is_echo, _looks_like_followup
 from app.agent.router import Intent, classify, needs_retrieval
 from app.core.config import Settings
 from app.providers.registry import build_provider, describe_configuration
+from app.rag.relevance import gate, is_relevant
 from app.rag.retrieval import Citation, RetrievalResult, format_sources_block, search
 from app.skills.ship30_validator import validate
 
@@ -222,6 +223,75 @@ class TestGrounding:
         ):
             result = await search("retention", settings=settings)
         assert result.grounded is False
+
+
+class TestRelevanceGate:
+    """The second grounding stage.
+
+    A cosine floor alone cannot enforce the grounding guarantee on this corpus —
+    measured separation gap of -0.064, with "how does photosynthesis work"
+    outscoring a legitimate question about continuous discovery. These tests
+    pin the gate's contract: when it runs, when it is skipped, and which way it
+    fails.
+    """
+
+    @pytest.fixture
+    def settings(self):
+        return Settings(retrieval_score_floor=0.45, retrieval_confident_score=0.72)
+
+    async def test_confident_results_skip_the_gate(self, settings):
+        """The common case must not pay for an extra LLM call."""
+        called = AsyncMock()
+        with patch("app.rag.relevance.is_relevant", called):
+            keep, reason = await gate("pricing", [_citation(0.85)], 0.85, settings=settings)
+        assert keep is True
+        assert reason == "confident"
+        called.assert_not_called()
+
+    async def test_ambiguous_results_are_verified(self, settings):
+        with patch("app.rag.relevance.is_relevant", AsyncMock(return_value=True)):
+            keep, reason = await gate("pricing", [_citation(0.60)], 0.60, settings=settings)
+        assert keep is True
+        assert reason == "verified"
+
+    async def test_gate_can_reject(self, settings):
+        with patch("app.rag.relevance.is_relevant", AsyncMock(return_value=False)):
+            keep, reason = await gate("photosynthesis", [_citation(0.62)], 0.62, settings=settings)
+        assert keep is False
+        assert "outside what the podcast archive covers" in reason
+
+    async def test_no_citations_is_not_relevant(self, settings):
+        assert await is_relevant("anything", [], settings=settings) is False
+
+    async def test_gate_fails_open_when_the_model_is_down(self, settings):
+        """A provider outage must not turn into a blanket refusal.
+
+        The answer prompt still instructs the model to say when its sources do
+        not cover the question, so passing weak sources through is recoverable;
+        refusing everything is not.
+        """
+        from app.core.errors import ProviderUnavailableError
+
+        with patch(
+            "app.rag.relevance.chat_stream_with_fallback",
+            side_effect=ProviderUnavailableError("ollama down"),
+        ):
+            assert await is_relevant("pricing", [_citation(0.6)], settings=settings) is True
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [("YES", True), ("yes", True), ("NO", False), ("no.", False), ("Y", True), ("maybe", True)],
+    )
+    async def test_verdict_parsing(self, settings, raw: str, expected: bool):
+        """Anything unparseable fails open, consistent with the outage path."""
+
+        async def fake_stream(*_args, **_kwargs):
+            from app.providers.base import Delta
+
+            yield Delta(text=raw), "ollama"
+
+        with patch("app.rag.relevance.chat_stream_with_fallback", fake_stream):
+            assert await is_relevant("q", [_citation(0.6)], settings=settings) is expected
 
 
 class TestSourceFormatting:

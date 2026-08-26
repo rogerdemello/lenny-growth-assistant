@@ -35,7 +35,8 @@ from app.core.errors import AppError
 from app.core.logging import Stage, get_logger
 from app.providers.base import Message
 from app.providers.registry import chat_stream_with_fallback, get_provider
-from app.rag.retrieval import format_sources_block, search
+from app.rag.relevance import gate as relevance_gate
+from app.rag.retrieval import RetrievalResult, format_sources_block, search
 
 log = get_logger(__name__)
 
@@ -117,6 +118,22 @@ class LocalToolLoopRuntime(AgentRuntime):
             yield AgentEvent("stage", {"stage": "retrieving", "detail": "Searching transcripts"})
             with Stage("retrieve", timings):
                 result = await search(query, settings=settings)
+
+            # Second-stage gate. Cosine score alone cannot separate in-domain
+            # from out-of-domain on this corpus — see app/rag/relevance.py for
+            # the measurement. Skipped entirely for confident matches, so the
+            # common case pays nothing.
+            if result.grounded and result.best_score < settings.retrieval_confident_score:
+                yield AgentEvent("stage", {"stage": "verifying", "detail": "Checking the passages are relevant"})
+                with Stage("relevance_gate", timings):
+                    keep, reason = await relevance_gate(
+                        query, result.citations, result.best_score, settings=settings
+                    )
+                if not keep:
+                    result = RetrievalResult(
+                        [], grounded=False, strategy=result.strategy,
+                        best_score=result.best_score, reason=reason,
+                    )
 
             if not result.grounded:
                 log.info("agent.no_grounding", reason=result.reason, query=query[:80])

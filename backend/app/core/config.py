@@ -89,7 +89,20 @@ class Settings(BaseSettings):
     # 8 sources is not.
     retrieval_top_k: int = 8
     prompt_top_k: int = 4
-    retrieval_score_floor: float = 0.35
+
+    # Grounding is enforced in two stages, because one is provably not enough.
+    #
+    # `retrieval_score_floor` discards obvious junk for free. It is set low on
+    # purpose: calibration against the real corpus showed cosine score alone
+    # CANNOT separate in-domain from out-of-domain questions with this model
+    # ("how does photosynthesis work" scored 0.62, above a legitimate question
+    # about continuous discovery at 0.56 — a separation gap of -0.064).
+    #
+    # `retrieval_confident_score` is the point above which a result is trusted
+    # without further checking. Between the floor and this value, a one-word
+    # LLM relevance gate decides. See app/rag/relevance.py.
+    retrieval_score_floor: float = 0.45
+    retrieval_confident_score: float = 0.72
 
     # --- ingestion --------------------------------------------------------
     transcripts_repo: str = "ChatPRD/lennys-podcast-transcripts"
