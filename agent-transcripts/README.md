@@ -1,12 +1,12 @@
 # Coding agent transcripts
 
-This project was built in one working day with Claude Code driving most of the implementation. `session-01-*.md` is the full, unedited record — regenerate it any time with:
+This project was built in one working day with Claude Code driving most of the implementation. `session-*.md` are the full, unedited records (the largest is the main build session; the short ones are Claude Agent SDK gateway spikes) — regenerate it any time with:
 
 ```bash
 python scripts/export_agent_transcript.py
 ```
 
-Secrets are scrubbed automatically by that script, which also refuses to finish if a known credential shape survives the pass.
+Secrets are scrubbed automatically by that script, which reads the real values from `.env`, redacts them and any 12+ character fragment of them, and **exits non-zero rather than finishing** if anything survives. See failure 11 below for why that is more paranoid than it first looks.
 
 The rest of this file is the part worth reading: **what went wrong, and how it was caught.** The transcript is long; these are the moments that changed the code.
 
@@ -144,17 +144,41 @@ The same run also revealed the outline JSON failing to parse (`ship30.outline_fa
 
 ---
 
+### 11. The leak-checker leaked
+
+**What happened.** Live credentials were pasted into the session partway through the build. The transcript exporter scrubs secrets, and its self-check reported **"no secrets detected"**. An independent grep found **five live credentials** in the output.
+
+**Two causes, both worth recording.**
+
+The self-check only re-ran the first six *patterns* it used for scrubbing. Anything the patterns missed on the way in, they missed again on the way out — so the check could only ever confirm what already worked. A verification step that shares its assumptions with the thing it verifies is decoration.
+
+And the biggest single leak was in **the verification command itself**. To check for the secrets, I had written a command listing them as bare quoted strings:
+
+```powershell
+foreach ($needle in @('E0oOp3…','4xm3yf…','iuayyx…')) { … }
+```
+
+That command went into the transcript. It matches no `KEY=value` shape, so no pattern touched it. **The step whose entire job was to find leaked secrets was the largest source of leaked secrets.**
+
+**The fix.** Scrub by *value*, not only by shape: read the real values from `.env` at export time and redact those literal strings wherever they appear, in any context — prose, shell commands, JSON, log output. Pattern rules stay as a backstop for anything not in `.env`.
+
+**And then a third round.** That still left one survivor: a 20-character *prefix* of the Azure key, again from a debug command. Literal replacement of the full 84-character value does not match a hand-typed prefix. Now each secret becomes a regex — its first 12 characters plus any continuation — so a full value, a truncated copy, and a hand-typed fragment are all caught. The exporter exits non-zero rather than finishing if anything survives.
+
+**The lesson.** Three iterations, each one revealing that the previous check was weaker than it looked. Verification must be independent of the mechanism it verifies — and a security control that reports success is worth nothing until something you did *not* write confirms it.
+
+---
+
 ## Environment problems
 
-### 11. Ollama installed to the wrong drive
+### 12. Ollama installed to the wrong drive
 
 `winget install Ollama.Ollama` defaults to `%LOCALAPPDATA%` on C:. The install is ~2.8 GB and the cached models already lived on E:. The winget job was killed mid-download, the installer fetched directly, and run with `/DIR=E:\ML\Ollama`. It picked up the existing `llama3.2` blob via the pre-set `OLLAMA_MODELS`, saving a 2 GB re-download.
 
-### 12. A silent hang on install
+### 13. A silent hang on install
 
 `Start-Process -Wait` on the Ollama installer never returned. The installer had already finished — it launched the Ollama tray app as a child process, and `-Wait` was waiting on *that*. Checking for `ollama.exe` on disk while the command was still "running" is what revealed it.
 
-### 13. Mojibake from a PowerShell round-trip
+### 14. Mojibake from a PowerShell round-trip
 
 Renumbering these very sections with `Get-Content -Raw | ... | Set-Content -Encoding utf8` corrupted every em-dash in the file. PowerShell 5.1's `Get-Content` defaults to the system ANSI codepage, so a UTF-8 file is read as mojibake and then written back out as double-encoded UTF-8. The file was rewritten from source rather than patched again.
 
@@ -164,7 +188,7 @@ Renumbering these very sections with `Get-Content -Raw | ... | Set-Content -Enco
 
 The most useful thing the agent did was **stop and measure before committing to an approach.**
 
-### 14. Prefill cost split retrieval in two
+### 15. Prefill cost split retrieval in two
 
 The plan assumed `RETRIEVAL_TOP_K=8`. A benchmark against the real model showed:
 
@@ -178,7 +202,7 @@ Generation ran ~7–9 tok/s throughout. So eight passages doubled the wait befor
 
 **The change.** `RETRIEVAL_TOP_K` (what the user sees as citations) was separated from `PROMPT_TOP_K` (what the model reads). Showing eight sources is free; feeding the model eight is not. That split does not exist in the original plan — it exists because of a measurement.
 
-### 15. Embedding throughput sized the corpus
+### 16. Embedding throughput sized the corpus
 
 Measured at ~1.45 chunks/sec on CPU. A real episode produced 33 chunks, and a dry run over the selected 40 episodes produced 1,464. That is roughly 17 minutes of embedding — which is what confirmed `INGEST_MAX_EPISODES=40` rather than leaving it a guess.
 

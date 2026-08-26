@@ -48,12 +48,68 @@ SCRUB_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     ),
     (re.compile(r"https://[a-z0-9-]+\.openai\.azure\.com", re.IGNORECASE), "https://<AZURE_RESOURCE_REDACTED>.openai.azure.com"),
     (re.compile(r"https://[a-z0-9]{20}\.supabase\.co", re.IGNORECASE), "https://<SUPABASE_PROJECT_REDACTED>.supabase.co"),
-    # Generic assignments, e.g. `AZURE_OPENAI_API_KEY=abc123` or `"api_key": "abc"`.
+    # Generic assignments. The `["']?\s*` before the separator matters: a
+    # PowerShell hashtable writes `'AZURE_OPENAI_API_KEY'  = '...'`, where the
+    # character after the name is a closing quote, not whitespace. An earlier
+    # version required whitespace-or-separator immediately and missed it.
     (
-        re.compile(r"([A-Z0-9_]*(?:API_KEY|SECRET|TOKEN|PASSWORD)[A-Z0-9_]*\s*[=:]\s*[\"']?)([^\s\"',}]{8,})", re.IGNORECASE),
+        re.compile(
+            r"([A-Z0-9_]*(?:API_KEY|SECRET|TOKEN|PASSWORD|CONNECTION_STRING)[A-Z0-9_]*[\"']?\s*[=:]\s*[\"']?)"
+            r"([^\s\"',}]{8,})",
+            re.IGNORECASE,
+        ),
         r"\1<REDACTED>",
     ),
 ]
+
+
+def load_secret_values(env_path: Path) -> list[str]:
+    """Read the actual secret values from .env so they can be redacted literally.
+
+    Pattern matching alone is not enough, and the way it failed here is
+    instructive: a verification command that greps for the secrets embeds them
+    as bare quoted strings, in no recognisable `KEY=value` shape. The
+    leak-checking step leaked.
+
+    Redacting by value catches every context — prose, shell commands, JSON,
+    log output — because it does not care how the secret is spelled around it.
+    Pattern rules stay as a backstop for anything not in .env.
+    """
+    values: list[str] = []
+    if not env_path.exists():
+        return values
+
+    for line in env_path.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, _, raw = line.partition("=")
+        value = raw.strip().strip("\"'")
+        # Short values are not secrets and would cause absurd false positives
+        # ("ollama", "json", "local").
+        if len(value) < 12:
+            continue
+        if not re.search(r"KEY|SECRET|TOKEN|PASSWORD|URL|ENDPOINT|DSN", key, re.IGNORECASE):
+            continue
+        values.append(value)
+
+        # A connection string hides two more secrets inside it: the password
+        # and the host. Both leak identity even when the full URL does not
+        # appear verbatim.
+        if match := re.match(r"[a-z+]+://([^:@/\s]+):([^@\s]+)@([^/\s:]+)", value, re.IGNORECASE):
+            values.extend(part for part in (match.group(2), match.group(3)) if len(part) >= 8)
+            # The Supabase project ref, e.g. db.<ref>.supabase.co
+            if ref := re.search(r"db\.([a-z0-9]{16,})\.supabase\.co", match.group(3), re.IGNORECASE):
+                values.append(ref.group(1))
+
+        # The resource name inside an Azure endpoint.
+        if host := re.search(r"https://([a-z0-9-]+)\.openai\.azure\.com", value, re.IGNORECASE):
+            values.append(host.group(1))
+            values.append(f"{host.group(1)}.openai.azure.com")
+
+    # Longest first, so a substring never redacts before its container does and
+    # leave a recognisable tail behind.
+    return sorted(set(values), key=len, reverse=True)
 
 # Tool results are frequently thousands of lines of file content. Truncating
 # keeps the transcript readable without losing what the agent actually did.
@@ -61,7 +117,37 @@ MAX_TOOL_RESULT_CHARS = 1_200
 MAX_TOOL_INPUT_CHARS = 2_000
 
 
+SECRET_VALUES: list[str] = []
+SECRET_PATTERNS: list[re.Pattern[str]] = []
+
+# A partial secret is still a leak. Debug commands routinely quote the first
+# 20 characters of a key, which literal replacement of the full value does not
+# match. Anything from this length up is redacted.
+MIN_SECRET_FRAGMENT = 12
+
+
+def build_secret_patterns(values: list[str]) -> list[re.Pattern[str]]:
+    """Match each secret *and any prefix of it* of at least MIN_SECRET_FRAGMENT.
+
+    `<first 12 chars><any continuation>` catches the full value, a truncated
+    copy, and a hand-typed prefix in a grep command — which is exactly how the
+    first version of this script leaked.
+    """
+    patterns = []
+    for value in values:
+        if len(value) < MIN_SECRET_FRAGMENT:
+            continue
+        head = re.escape(value[:MIN_SECRET_FRAGMENT])
+        # Opaque tokens continue with URL/base64-ish characters; URLs and hosts
+        # continue with path characters too.
+        patterns.append(re.compile(head + r"[A-Za-z0-9_\-.:/+=@]*"))
+    return patterns
+
+
 def scrub(text: str) -> str:
+    # Secret values first — the strongest rule, and independent of context.
+    for pattern in SECRET_PATTERNS:
+        text = pattern.sub("<REDACTED>", text)
     for pattern, replacement in SCRUB_PATTERNS:
         text = pattern.sub(replacement, text)
     return text
@@ -193,6 +279,15 @@ def convert(path: Path) -> tuple[str, Stats]:
 
 
 def main() -> None:
+    global SECRET_VALUES, SECRET_PATTERNS
+    SECRET_VALUES = load_secret_values(REPO_ROOT / ".env")
+    SECRET_PATTERNS = build_secret_patterns(SECRET_VALUES)
+    if SECRET_VALUES:
+        print(
+            f"Redacting {len(SECRET_VALUES)} secret value(s) from .env, "
+            f"including any fragment of {MIN_SECRET_FRAGMENT}+ characters"
+        )
+
     files = find_session_files()
     if not files:
         print("No session transcripts found.", file=sys.stderr)
@@ -220,22 +315,33 @@ def main() -> None:
         written.append((path, stats, target))
         print(f"  {target.relative_to(REPO_ROOT)}  ({target.stat().st_size / 1024:.0f} KB)")
 
-    # A last-resort check: if a known secret shape survived, say so loudly
-    # rather than letting it reach a public repository.
-    leaked = []
+    # Verify what was actually written.
+    #
+    # The previous version of this check only re-ran the first six *patterns*,
+    # and so reported "no secrets detected" while five live credentials sat in
+    # the output — including in a verification command that had embedded them
+    # as bare quoted strings. Checking the literal values is the check that
+    # would have caught it, so that is what runs first.
+    leaked: list[tuple[str, str]] = []
     for _, _, target in written:
         text = target.read_text(encoding="utf-8")
+        for value, pattern in zip(SECRET_VALUES, SECRET_PATTERNS, strict=False):
+            if pattern.search(text):
+                leaked.append((target.name, f"secret (or fragment) ending ...{value[-4:]}"))
         for pattern, _ in SCRUB_PATTERNS[:6]:
             if pattern.search(text):
-                leaked.append((target.name, pattern.pattern[:40]))
+                leaked.append((target.name, f"pattern /{pattern.pattern[:40]}/"))
 
     if leaked:
-        print("\nWARNING: possible unscrubbed secrets:", file=sys.stderr)
-        for name, pattern in leaked:
-            print(f"  {name}: matched /{pattern}/", file=sys.stderr)
+        print("\nREFUSING TO FINISH — unscrubbed secrets in the output:", file=sys.stderr)
+        for name, what in leaked:
+            print(f"  {name}: {what}", file=sys.stderr)
+        print("\nFix scripts/export_agent_transcript.py before committing.", file=sys.stderr)
         raise SystemExit(2)
 
-    print(f"\nExported {len(written)} transcript(s) to {OUTPUT_DIR.relative_to(REPO_ROOT)}/ — no secrets detected.")
+    checked = f"{len(SECRET_VALUES)} literal value(s) + {len(SCRUB_PATTERNS)} patterns"
+    print(f"\nExported {len(written)} transcript(s) to {OUTPUT_DIR.relative_to(REPO_ROOT)}/")
+    print(f"Verified clean against {checked}.")
 
 
 if __name__ == "__main__":
