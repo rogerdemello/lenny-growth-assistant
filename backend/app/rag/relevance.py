@@ -34,6 +34,8 @@ defence, not the only one.
 
 from __future__ import annotations
 
+import re
+
 from app.core.config import Settings
 from app.core.errors import AppError
 from app.core.logging import get_logger
@@ -76,6 +78,42 @@ Q: what is the offside rule in football -> NO
 Q: how do I bake sourdough bread -> NO
 Q: what is the capital of France -> NO"""
 
+# The verdict is one word, so a tiny ceiling looks like free money. It is not.
+#
+# Reasoning models (gpt-oss, nemotron, o-series) emit a thinking trace before any
+# `content` at all. At max_tokens=5 the whole budget is spent thinking and the
+# response carries an empty `content` — so the gate read "", fell through to the
+# unparseable branch, and failed open. Measured against `openai/gpt-oss-120b`
+# with "how does photosynthesis work":
+#
+#     max_tokens=5     ""     -> gate fails open, question leaks through
+#     max_tokens=20    ""     -> gate fails open, question leaks through
+#     max_tokens=100   "NO"   -> correctly refused
+#
+# The model knew the answer at every ceiling; below 100 it never got to say it.
+# That turned the grounding guarantee off entirely for a whole class of models,
+# silently, with only a warning log to show for it.
+#
+# A ceiling is not a cost. A non-reasoning model still stops after one token, so
+# this is free for `llama3.2`; a reasoning model now pays for its trace, which is
+# the actual price of choosing one.
+GATE_MAX_TOKENS = 256
+
+
+def _parse_verdict(raw: str) -> bool | None:
+    """YES / NO / None if the model said neither.
+
+    Reasoning models put the verdict last, plain ones put it first, and either
+    may wrap it in punctuation or markdown. Checking the last standalone token
+    handles all three without inferring a verdict from prose that merely
+    contains the word.
+    """
+    words = re.findall(r"[A-Z]+", raw.upper())
+    for word in reversed(words):
+        if word in ("YES", "NO"):
+            return word == "YES"
+    return None
+
 
 def _build_prompt(question: str, citations: list[Citation], max_chars: int = 400) -> str:  # noqa: ARG001
     return f"Q: {question} ->"
@@ -99,7 +137,7 @@ async def is_relevant(
                 Message(role="user", content=_build_prompt(question, citations)),
             ],
             temperature=0.0,
-            max_tokens=5,
+            max_tokens=GATE_MAX_TOKENS,
             settings=settings,
         ):
             buf += delta.text
@@ -107,14 +145,27 @@ async def is_relevant(
         log.warning("relevance.gate_failed", error=str(exc))
         return True
 
-    verdict = buf.strip().upper()
-    if verdict.startswith("NO"):
+    verdict = _parse_verdict(buf)
+    if verdict is False:
         log.info("relevance.rejected", question=question[:100], best_score=citations[0].score)
         return False
-    if verdict.startswith("YES"):
+    if verdict is True:
         return True
 
-    log.warning("relevance.unparseable", raw=buf[:80])
+    # Still fails open, deliberately — see the module docstring. But an empty
+    # `raw` here means the model produced no content at all, which is the
+    # reasoning-model symptom above rather than a one-off hiccup, so say which.
+    log.warning(
+        "relevance.unparseable",
+        raw=buf[:80],
+        empty=not buf.strip(),
+        hint=(
+            "The model returned no content. If it is a reasoning model, its trace "
+            "consumed the token budget; raise GATE_MAX_TOKENS."
+        )
+        if not buf.strip()
+        else None,
+    )
     return True
 
 

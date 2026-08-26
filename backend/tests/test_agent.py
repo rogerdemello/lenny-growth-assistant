@@ -21,7 +21,7 @@ from app.core.errors import ProviderUnavailableError
 from app.providers.base import Message
 from app.providers.openai_compat import OpenAICompatProvider, _status_hint
 from app.providers.registry import build_provider, describe_configuration
-from app.rag.relevance import gate, is_relevant
+from app.rag.relevance import GATE_MAX_TOKENS, _parse_verdict, gate, is_relevant
 from app.rag.retrieval import Citation, RetrievalResult, format_sources_block, search
 from app.skills.ship30 import _parse_line_outline
 from app.skills.ship30_validator import validate
@@ -297,6 +297,61 @@ class TestRelevanceGate:
 
         with patch("app.rag.relevance.chat_stream_with_fallback", fake_stream):
             assert await is_relevant("q", [_citation(0.6)], settings=settings) is expected
+
+    def test_the_token_ceiling_leaves_room_for_a_reasoning_trace(self):
+        """Regression: a 5-token ceiling silently disabled the gate.
+
+        Reasoning models emit their thinking before any `content`. At
+        max_tokens=5 the budget was gone before the verdict, so `openai/gpt-oss-120b`
+        returned empty content and every out-of-domain question failed open.
+        Measured: "" at 5 and 20 tokens, "NO" at 100.
+        """
+        assert GATE_MAX_TOKENS >= 100
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            # A reasoning model concludes at the end, after restating the task.
+            ("The question is about science, not product management. NO", False),
+            ("This concerns growth strategy, so YES", True),
+            # A plain model answers first and may add punctuation or markdown.
+            ("NO -- this is out of scope", False),
+            ("**YES**", True),
+        ],
+    )
+    def test_verdict_is_read_from_the_last_standalone_token(self, raw: str, expected: bool):
+        """Prose around the verdict must not flip it.
+
+        `startswith` read only the front, which a reasoning model never puts the
+        answer in. Taking the last standalone YES/NO handles both orders without
+        matching the word inside surrounding prose.
+        """
+        assert _parse_verdict(raw) is expected
+
+    def test_content_free_output_stays_unparseable(self):
+        """No verdict must not become a verdict — it still fails open."""
+        assert _parse_verdict("") is None
+        assert _parse_verdict("hmm") is None
+
+    async def test_an_empty_response_fails_open_and_says_why(self, settings):
+        """The reasoning-model symptom must be diagnosable from the logs.
+
+        Failing open is deliberate, but failing open for an entire class of
+        models with an unexplained warning is how this went unnoticed.
+        """
+
+        async def fake_stream(*_args, **_kwargs):
+            from app.providers.base import Delta
+
+            yield Delta(text=""), "openai_compat"
+
+        with patch("app.rag.relevance.chat_stream_with_fallback", fake_stream):
+            with patch("app.rag.relevance.log.warning") as warned:
+                assert await is_relevant("q", [_citation(0.6)], settings=settings) is True
+
+        _, kwargs = warned.call_args
+        assert kwargs["empty"] is True
+        assert "reasoning model" in kwargs["hint"]
 
 
 class TestSubjectExtraction:

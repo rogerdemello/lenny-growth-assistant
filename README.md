@@ -45,7 +45,7 @@ Runs entirely on a local model. No API key required.
 
 This turned out to need two stages. A similarity floor alone **provably does not work**: measured against the real corpus, "how does photosynthesis work" scored 0.62 while a legitimate question about continuous product discovery scored 0.56, because the embedding partly matches question *shape* rather than topic. So a low floor discards obvious junk, and anything not confidently relevant gets one cheap topic-classification call. Measured result on `llama3.2` over CPU: **10/10 in-domain answered, 10/10 out-of-domain refused.**
 
-Reproduce it yourself with `python -m app.rag.calibrate`.
+Reproduce it yourself with `python -m app.rag.calibrate` — and **re-run it after changing `LLM_PROVIDER`**, because the gate makes an LLM call and therefore behaves differently on different models. That is not hypothetical: pointing the app at a *reasoning* model (`openai/gpt-oss-120b`) disabled the gate outright. Its thinking trace consumed the gate's 5-token budget before it could emit a verdict, the empty response hit the fail-open branch, and "how does photosynthesis work" came back marked grounded with four citations. Fixed, and [written up in full](docs/architecture.md#failing-open-has-a-failure-mode-of-its-own-a-reasoning-model).
 
 **Follow-ups that work.** "What about for PLG?" is condensed into a standalone query before retrieval, so pronouns and references to earlier turns resolve correctly.
 
@@ -98,7 +98,7 @@ Docker is optional — see [Running with Docker](#running-with-docker).
 
 ## Quick start
 
-> **This path has been tested from a genuine fresh clone**, not just asserted. Cloning into an empty directory, copying `.env.example`, supplying only a `DATABASE_URL`, and following the steps below produced: 204 tests passing, migrations applied, the grounding calibration at 10/10 and 10/10, the frontend building, and the API reporting `status: ok` on all components.
+> **This path has been tested from a genuine fresh clone**, not just asserted. Cloning into an empty directory, copying `.env.example`, supplying only a `DATABASE_URL`, and following the steps below produced: 211 tests passing, migrations applied, the grounding calibration at 10/10 and 10/10, the frontend building, and the API reporting `status: ok` on all components.
 
 ### 1. Clone and configure
 
@@ -275,7 +275,7 @@ A deliberately bounded corpus also makes the refusal behaviour demonstrable: the
 
 ```bash
 cd backend
-uv run pytest                        # 204 tests in ~3s, no network or database required
+uv run pytest                        # 211 tests in ~3s, no network or database required
 uv run ruff check app                # lint
 uv run python -m app.rag.calibrate   # verify the grounding guarantee against the live corpus
 ```
@@ -290,7 +290,7 @@ out-of-domain refused  10/10
 | Suite | Covers |
 |---|---|
 | `test_ingest.py` | frontmatter edge cases (wrapped titles, doubled apostrophes, malformed YAML), speaker-turn regex, timestamp conversion, `[inaudible]` stripping, chunker never splitting a turn, overlap without duplication, corpus selection rules |
-| `test_agent.py` | intent routing, **grounding refusal below the score floor**, lexical fallback when embeddings are down, Ship 30 validator, Azure URL layout, secrets never appearing in `/api/config` |
+| `test_agent.py` | intent routing, **grounding refusal below the score floor**, the relevance gate's token ceiling and verdict parsing (**a reasoning model's trace must not disable the gate**), lexical fallback when embeddings are down, Ship 30 validator, Azure URL layout, provider error hints including a retired model, secrets never appearing in `/api/config` |
 | `test_security.py` | 22 XSS payloads, `data:` allowed for images but not links, CSP and sandbox policy assertions |
 | `test_api.py` | Endpoint contracts, the structured error envelope, request-id propagation, **session isolation** (messages and agent history never cross sessions), SSE frame sequence, persistence of a completed turn, ingest endpoint guarding |
 
@@ -312,7 +312,7 @@ The manual UI plan is in [`docs/manual-test-plan.md`](docs/manual-test-plan.md).
 
 **Every question is refused.** Either the corpus is empty — run ingestion and check `GET /health` shows `embedded_chunks > 0` — or the thresholds are wrong for your embedding model. Run `python -m app.rag.calibrate`; it tells you which.
 
-**It answers questions it shouldn't.** Run `python -m app.rag.calibrate`. If it reports leaks, `RETRIEVAL_SCORE_FLOOR` is too low for your embedding model, or the relevance gate is failing open because the chat provider is unreachable.
+**It answers questions it shouldn't.** Run `python -m app.rag.calibrate`. If it reports leaks, `RETRIEVAL_SCORE_FLOOR` is too low for your embedding model, or the relevance gate is failing open. Check the logs for `relevance.unparseable`: `empty=true` means the chat model returned no content, which on a reasoning model means its thinking trace exhausted `GATE_MAX_TOKENS` — raise it in `app/rag/relevance.py`. A `relevance.gate_failed` warning instead means the chat provider is unreachable.
 
 **I changed `EMBED_MODEL` and retrieval got worse.** Two things to check. Re-index (`--force`) — vectors from different models are not comparable. And confirm the task prefixes: asymmetric models like nomic, e5 and bge are *trained* with `search_query:`/`search_document:` prefixes and are measurably miscalibrated without them. Defaults are inferred from the model name; override with `EMBED_QUERY_PREFIX`/`EMBED_DOCUMENT_PREFIX`.
 

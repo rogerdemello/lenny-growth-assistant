@@ -278,11 +278,34 @@ So grounding runs in two stages:
 | Stage | Cost | What it does |
 |---|---|---|
 | **Score floor** (`RETRIEVAL_SCORE_FLOOR`, 0.45) | free | Discards obvious junk. Deliberately low. |
-| **Relevance gate** (`app/rag/relevance.py`) | one ~5-token LLM call | Runs only between the floor and `RETRIEVAL_CONFIDENT_SCORE` (0.72). Above that, results are trusted without checking, so the common case pays nothing. |
+| **Relevance gate** (`app/rag/relevance.py`) | one one-word LLM call | Runs only between the floor and `RETRIEVAL_CONFIDENT_SCORE` (0.72). Above that, results are trusted without checking, so the common case pays nothing. |
 
 **The gate classifies the question's topic, not whether the passages answer it.** The first version asked the harder, more obviously correct question — "do these passages answer this?" — and rejected 4 of 10 legitimate questions, including one scoring 0.70, because transcript passages are rambling and conversational and rarely look like a tidy answer. Topic classification is a far easier judgement for a 3B model, and it targets the actual failure mode: every leak was an out-of-*domain* question, not an in-domain question with weak passages. Weak passages are already handled — the answer prompt instructs the model to say when its sources fall short.
 
 The gate **fails open**. If it errors or returns something unparseable, the passages are kept. A retrieval layer that refuses whenever the model hiccups would be worse than one that occasionally passes weak sources.
+
+#### Failing open has a failure mode of its own: a reasoning model
+
+The verdict is one word, so the gate originally capped the call at `max_tokens=5`. That is correct for `llama3.2` and silently wrong for a reasoning model.
+
+Reasoning models — `openai/gpt-oss-120b`, nemotron, the o-series — emit a thinking trace *before* any `content`. At a 5-token ceiling the entire budget is spent thinking, the response carries empty `content`, and the gate reads `""`. That is the unparseable branch, so it fails open — on **every** question, not occasionally. Measured against `openai/gpt-oss-120b` with "how does photosynthesis work":
+
+```
+max_tokens=5     ""     -> gate fails open, question leaks through
+max_tokens=20    ""     -> gate fails open, question leaks through
+max_tokens=100   "NO"   -> correctly refused
+```
+
+The model knew the answer at every ceiling. Below 100 it never got to say it. End to end, the leak looked like this: the assistant returned `grounded: true` with four citations attached to the sentence *"The provided passages do not contain any information about how photosynthesis works."* — a refusal wearing the UI of a grounded answer, which is worse than either an answer or a refusal.
+
+Two changes, in `app/rag/relevance.py`:
+
+- **`GATE_MAX_TOKENS = 256`.** A ceiling is not a cost: a non-reasoning model still stops after one token, so this is free for `llama3.2`. A reasoning model now pays for its trace, which is the real price of choosing one.
+- **The verdict is read from the last standalone `YES`/`NO` token**, not the first characters. Reasoning models put the conclusion at the end; plain models put it at the front. `startswith` only ever read the front.
+
+The general lesson is that **fail-open needs to be observable**. Failing open on a hiccup is the right call; failing open for an entire class of models, behind a single unlabelled warning, is how this survived. The warning now distinguishes "no content at all" from "content we could not parse" and names the likely cause.
+
+**This is why `calibrate` is provider-specific.** The 10/10 result below is `llama3.2`'s. Re-run `python -m app.rag.calibrate` after changing `LLM_PROVIDER` — the gate's behaviour depends on the chat model, and this defect was invisible to a suite that only ever exercised one.
 
 Result on the same probe, with `llama3.2` on CPU:
 
